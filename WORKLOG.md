@@ -138,3 +138,30 @@ test numbers, deploy verification, and scope decisions.
   readings/s sustained through the chaos**. `RESULT: PASS`. This is the evidence
   for "reliable delivery + headroom for a planned high-frequency channel" — not a
   web-scale-QPS claim.
+
+## 2026-06-18/19 — Step 8: deploy to AWS EC2
+
+- **Box:** t4g.small (ARM/aarch64), Ubuntu, Docker 29.6 + Compose 5.1.4, 1.8 GB
+  RAM, 26 GB free. SSH OK.
+- **Artifacts:** `deploy/docker-compose.yml` (caddy + go-api + timescaledb,
+  named volumes; optional `mockfeed` collector profile), `deploy/Caddyfile`
+  (auto-HTTPS + `/api`,`/ingest`,`/healthz`,`/metrics` → go-api, else static
+  SPA), `collector/Dockerfile`, `deploy/deploy.sh`, `.dockerignore`s.
+- **Process:** built `web/dist` on the Mac, rsynced repo to
+  `ubuntu@…:/home/ubuntu/lab-monitor` (no secrets/node_modules/venv). Generated
+  secrets **on the box** into `deploy/.env` (chmod 600, never committed/printed):
+  POSTGRES_PASSWORD, INGEST_TOKEN, ADMIN_PASSWORD, JWT_SECRET (openssl rand).
+  `docker compose --profile mockfeed up -d --build` — images built natively for
+  ARM on the box.
+- **Verified live at `https://3.220.132.187.sslip.io`:**
+  - Caddy obtained a **Let's Encrypt cert** (tls-alpn-01); `openssl s_client`
+    confirms issuer = Let's Encrypt, CN = 3.220.132.187.sslip.io, valid
+    2026-06-19 → 2026-09-17. `/healthz` 200 over valid TLS (no `-k`).
+  - `/api/channels` returns the 7 live channels; `/metrics` shows honest uptime
+    + rows ingested (mockfeed producing); dashboard `index.html` served.
+  - **Three planes over public HTTPS:** ingest bad key → 401 / good key → 200;
+    public reads → 200; `PUT /api/config` no JWT → 401, with admin JWT → 200
+    (interval updated); wrong admin password → 401.
+  - Mock producer left running (compose `restart: unless-stopped`) so the
+    dashboard stays live and `/metrics` uptime accrues honestly. The real lab PC
+    replaces this feed per WIRING.md.

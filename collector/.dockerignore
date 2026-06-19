@@ -1,0 +1,6 @@
+.venv/
+buffer/
+tests/
+__pycache__/
+*.pyc
+requirements-dev.txt
