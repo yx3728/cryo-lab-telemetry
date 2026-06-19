@@ -90,3 +90,23 @@ test numbers, deploy verification, and scope decisions.
   4.2 K, log pressure axis correct, LL correctly absent (off), admin login form
   shown. Control plane (login → JWT → PUT config) already verified via curl in
   step 2.
+
+## 2026-06-18 — Step 5: three-tier auth + config control loop + alerting
+
+(Server + UI built in steps 2/4; this step is the end-to-end verification.)
+
+- **Three-tier auth** verified: `X-Api-Key` ingest (source-bound, 401 on bad
+  key, 400 on source mismatch); public reads; admin login → JWT → `PUT /api/config`
+  (401 without token, 200 with).
+- **Closed config control loop** verified *live*: admin `PUT /api/config`
+  changed the sampling interval 2 s → 4 s; the running collector's `config_loop`
+  polled, logged `control loop: sampling interval 2s -> 4s`, and adopted it
+  (still `dropped=0`). This is the headline "remote control of the instrument PC"
+  feature working end-to-end.
+- **Alerting + debounce** verified: admin added a `TESTCH max=100` threshold
+  (PUT triggers an immediate alerter cache reload); two crossing ingests (150,
+  160) within the 60 s window produced **exactly one** `alert_log` row (second
+  debounced), recorded `value=150 kind=max threshold=100 notified=false`
+  (log-only mode — honest, no SMTP/Slack secrets configured locally). Precise
+  debounce-window-expiry / re-arm behaviour is covered deterministically by the
+  step-7 unit tests with an injected clock.
