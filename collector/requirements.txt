@@ -1,0 +1,6 @@
+# Runtime dependencies for the edge collector.
+requests>=2.31
+
+# Only needed on the lab PC for READER=real (the existing instrument I/O).
+# Install separately there; the default mock mode needs nothing but requests.
+# pyvisa>=1.13
