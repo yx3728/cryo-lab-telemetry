@@ -9,6 +9,13 @@ instrument I/O; we do **not** rewrite it.
 Nothing new is needed on the Windows PC: just **Python + `requests` + the ingest
 token**. No Go, no Docker, no Node.
 
+> **Done for the temperature path.** This has been applied to the lab's Lake Shore
+> Model 350 logger. See [`docs/HARDWARE_INTERFACE.md`](./docs/HARDWARE_INTERFACE.md)
+> for the full hardware↔software interface, and
+> [`docs/U_Lakeshore350_Logger_aws.reference.py`](./docs/U_Lakeshore350_Logger_aws.reference.py)
+> for the redacted result (the runnable copy with secrets lives on the lab PC).
+> The vacuum-pressure logger is a separate script and gets the same one-loop edit.
+
 ---
 
 ## What changes
