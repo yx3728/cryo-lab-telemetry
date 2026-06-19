@@ -1,0 +1,41 @@
+# --- Secrets / env (NEVER commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- Go ---
+/server/bin/
+*.test
+*.out
+coverage.out
+
+# --- Node / React ---
+node_modules/
+web/dist/
+web/.vite/
+npm-debug.log*
+yarn-error.log*
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+collector/buffer/
+*.egg-info/
+
+# --- Data / runtime artifacts ---
+*.db
+data/
+pgdata/
+*.log
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
