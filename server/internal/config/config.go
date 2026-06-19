@@ -32,10 +32,11 @@ type Config struct {
 	JWTTTL        time.Duration
 
 	// Alerting.
-	AlertDebounce   time.Duration
-	SMTP            SMTPConfig
-	AlertEmailTo    []string
-	SlackWebhookURL string
+	AlertDebounce     time.Duration
+	AlertMaxEmailsDay int
+	SMTP              SMTPConfig
+	AlertEmailTo      []string
+	SlackWebhookURL   string
 }
 
 // SMTPConfig holds the optional email-notifier settings. If Host is empty, email
@@ -55,15 +56,16 @@ func (s SMTPConfig) Enabled() bool { return s.Host != "" && s.From != "" }
 // error (rather than panicking) so main can log a clear message and exit.
 func Load() (*Config, error) {
 	cfg := &Config{
-		DatabaseURL:   os.Getenv("DATABASE_URL"),
-		HTTPAddr:      envOr("HTTP_ADDR", ":8080"),
-		DBMaxConns:    envInt("DB_MAX_CONNS", 10),
-		IngestTokens:  parseIngestTokens(os.Getenv("INGEST_TOKENS")),
-		AdminUsername: envOr("ADMIN_USERNAME", "admin"),
-		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
-		JWTSecret:     []byte(os.Getenv("JWT_SECRET")),
-		JWTTTL:        time.Duration(envInt("JWT_TTL_HOURS", 24)) * time.Hour,
-		AlertDebounce: time.Duration(envInt("ALERT_DEBOUNCE_SECONDS", 300)) * time.Second,
+		DatabaseURL:       os.Getenv("DATABASE_URL"),
+		HTTPAddr:          envOr("HTTP_ADDR", ":8080"),
+		DBMaxConns:        envInt("DB_MAX_CONNS", 10),
+		IngestTokens:      parseIngestTokens(os.Getenv("INGEST_TOKENS")),
+		AdminUsername:     envOr("ADMIN_USERNAME", "admin"),
+		AdminPassword:     os.Getenv("ADMIN_PASSWORD"),
+		JWTSecret:         []byte(os.Getenv("JWT_SECRET")),
+		JWTTTL:            time.Duration(envInt("JWT_TTL_HOURS", 24)) * time.Hour,
+		AlertDebounce:     time.Duration(envInt("ALERT_DEBOUNCE_SECONDS", 300)) * time.Second,
+		AlertMaxEmailsDay: envInt("ALERT_MAX_EMAILS_PER_DAY", 50),
 		SMTP: SMTPConfig{
 			Host:     os.Getenv("SMTP_HOST"),
 			Port:     envOr("SMTP_PORT", "587"),

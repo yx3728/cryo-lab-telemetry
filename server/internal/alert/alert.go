@@ -29,6 +29,7 @@ type Notifier interface {
 type Alerter struct {
 	store     *store.Store
 	debounce  time.Duration
+	maxPerDay int // hard cap on notifications dispatched per UTC day (0 = unlimited)
 	notifiers []Notifier
 	log       *slog.Logger
 	now       func() time.Time
@@ -36,13 +37,19 @@ type Alerter struct {
 	mu         sync.RWMutex
 	thresholds map[string]store.Threshold
 	lastFired  map[string]time.Time
+	notifyDay  string // UTC date of the current notification count
+	notifyN    int    // notifications dispatched today
 }
 
-// New constructs an Alerter. notifiers may be empty (log-only mode).
-func New(s *store.Store, debounce time.Duration, log *slog.Logger, notifiers ...Notifier) *Alerter {
+// New constructs an Alerter. notifiers may be empty (log-only mode). maxPerDay
+// caps how many notifications are dispatched per UTC day (0 = unlimited) — a
+// safety net for the email free tier and against inbox flooding (on top of the
+// per-metric debounce).
+func New(s *store.Store, debounce time.Duration, maxPerDay int, log *slog.Logger, notifiers ...Notifier) *Alerter {
 	return &Alerter{
 		store:      s,
 		debounce:   debounce,
+		maxPerDay:  maxPerDay,
 		notifiers:  notifiers,
 		log:        log,
 		now:        time.Now,
@@ -139,8 +146,31 @@ func (a *Alerter) debounced(metric string) bool {
 	return false
 }
 
+// allowNotify enforces the per-UTC-day notification cap. It returns true (and
+// counts the dispatch) when under the cap, false when the cap is reached. A cap
+// of 0 means unlimited. The counter resets at UTC midnight.
+func (a *Alerter) allowNotify() bool {
+	if a.maxPerDay <= 0 {
+		return true
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	day := a.now().UTC().Format("2006-01-02")
+	if day != a.notifyDay {
+		a.notifyDay = day
+		a.notifyN = 0
+	}
+	if a.notifyN >= a.maxPerDay {
+		return false
+	}
+	a.notifyN++
+	return true
+}
+
 func (a *Alerter) fire(ctx context.Context, r store.Reading, cross Cross) {
-	notified := len(a.notifiers) > 0
+	// Dispatch only if a notifier is configured AND we're under the daily cap.
+	notified := len(a.notifiers) > 0 && a.allowNotify()
+
 	if err := a.store.InsertAlertLog(ctx, store.AlertEvent{
 		Source:         r.Source,
 		Metric:         r.Metric,
@@ -157,9 +187,14 @@ func (a *Alerter) fire(ctx context.Context, r store.Reading, cross Cross) {
 		"Source %s metric %s read %g, crossing the %s threshold of %g at %s.",
 		r.Source, r.Metric, r.Value, cross.Kind, cross.ThresholdValue, r.TS.Format(time.RFC3339))
 	a.log.Warn("alert fired", "metric", r.Metric, "kind", cross.Kind,
-		"value", r.Value, "threshold", cross.ThresholdValue)
+		"value", r.Value, "threshold", cross.ThresholdValue, "notified", notified)
 
 	if !notified {
+		// A cross still happened and is in alert_log; we just didn't email.
+		if len(a.notifiers) > 0 {
+			a.log.Warn("alert email suppressed: daily cap reached",
+				"metric", r.Metric, "cap_per_day", a.maxPerDay)
+		}
 		return
 	}
 	// Dispatch off the ingest path so SMTP/Slack latency never slows ingest.

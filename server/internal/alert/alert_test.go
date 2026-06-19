@@ -43,7 +43,7 @@ func TestEvaluate(t *testing.T) {
 // debounce state lives entirely in memory (no DB), so we can pass a nil store.
 func TestDebounce(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a := New(nil, 60*time.Second, log)
+	a := New(nil, 60*time.Second, 0, log)
 
 	current := time.Unix(1_000_000, 0)
 	a.now = func() time.Time { return current }
@@ -64,5 +64,33 @@ func TestDebounce(t *testing.T) {
 	current = current.Add(31 * time.Second)
 	if a.debounced("STM") {
 		t.Fatal("cross after the debounce window should re-arm (not be debounced)")
+	}
+}
+
+func TestNotifyCap(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	a := New(nil, time.Second, 2, log) // cap 2 notifications/day
+	current := time.Date(2026, 6, 19, 10, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return current }
+
+	if !a.allowNotify() || !a.allowNotify() {
+		t.Fatal("first two notifications should be allowed")
+	}
+	if a.allowNotify() {
+		t.Fatal("third notification should be capped")
+	}
+	// New UTC day resets the cap.
+	current = current.Add(24 * time.Hour)
+	if !a.allowNotify() {
+		t.Fatal("cap should reset on a new day")
+	}
+}
+
+func TestNotifyCapUnlimited(t *testing.T) {
+	a := New(nil, time.Second, 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := 0; i < 500; i++ {
+		if !a.allowNotify() {
+			t.Fatal("cap of 0 means unlimited")
+		}
 	}
 }

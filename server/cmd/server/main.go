@@ -57,7 +57,7 @@ func run(log *slog.Logger) error {
 	tokenAuth := auth.NewTokenAuth(cfg.IngestTokens)
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.JWTTTL, cfg.AdminUsername, cfg.AdminPassword)
 	metrics := metricsx.New()
-	alerter := alert.New(st, cfg.AlertDebounce, log, buildNotifiers(cfg, log)...)
+	alerter := alert.New(st, cfg.AlertDebounce, cfg.AlertMaxEmailsDay, log, buildNotifiers(cfg, log)...)
 	go alerter.Start(ctx) // periodic threshold reload
 
 	srv := api.NewServer(st, tokenAuth, jwtManager, alerter, metrics, log)
