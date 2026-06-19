@@ -88,25 +88,22 @@ func (s *Store) applyOneNoTx(ctx context.Context, name, sqlText string) error {
 	return err
 }
 
-// splitStatements splits a SQL file into individual statements on semicolons,
-// dropping blanks and comment-only fragments. Adequate for our hand-written
-// migration files (no semicolons inside string literals or function bodies).
+// splitStatements splits a SQL file into individual statements on semicolons.
+// It first strips `--` line comments so that semicolons inside comments don't
+// break the naive split. Adequate for our hand-written migration files (no `--`
+// or `;` inside string literals or function bodies).
 func splitStatements(sqlText string) []string {
+	var stripped strings.Builder
+	for _, line := range strings.Split(sqlText, "\n") {
+		if i := strings.Index(line, "--"); i >= 0 {
+			line = line[:i] // drop the comment portion of the line
+		}
+		stripped.WriteString(line)
+		stripped.WriteByte('\n')
+	}
 	var out []string
-	for _, part := range strings.Split(sqlText, ";") {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		// Skip fragments that are only line comments.
-		onlyComments := true
-		for _, line := range strings.Split(trimmed, "\n") {
-			if l := strings.TrimSpace(line); l != "" && !strings.HasPrefix(l, "--") {
-				onlyComments = false
-				break
-			}
-		}
-		if !onlyComments {
+	for _, part := range strings.Split(stripped.String(), ";") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
 			out = append(out, trimmed)
 		}
 	}

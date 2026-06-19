@@ -170,7 +170,9 @@ func resolveStep(requested string, from, to time.Time) string {
 		return "2m"
 	case span <= 7*24*time.Hour:
 		return "15m"
-	default:
+	case span <= 31*24*time.Hour:
 		return "1h"
+	default:
+		return "6h" // 90d -> ~360 points
 	}
 }

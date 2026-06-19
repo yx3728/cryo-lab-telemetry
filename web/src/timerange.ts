@@ -13,6 +13,8 @@ export const PRESETS: RangePreset[] = [
   { label: "12h", ms: 12 * 60 * 60_000 },
   { label: "24h", ms: 24 * 60 * 60_000 },
   { label: "7d", ms: 7 * 24 * 60 * 60_000 },
+  { label: "30d", ms: 30 * 24 * 60 * 60_000 },
+  { label: "90d", ms: 90 * 24 * 60 * 60_000 },
 ];
 
 export function rangeFor(preset: RangePreset, now: number = Date.now()): { from: Date; to: Date } {

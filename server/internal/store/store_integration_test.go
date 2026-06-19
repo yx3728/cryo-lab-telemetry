@@ -91,6 +91,14 @@ func TestIntegration_QuerySeries(t *testing.T) {
 	if _, err := s.InsertReadings(ctx, batch); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
+	// A 30s step routes to readings_1s; materialize it for this (old, isolated)
+	// range so the test is deterministic. On the live box the refresh policy +
+	// real-time aggregation keep recent data fresh without a manual refresh.
+	if _, err := s.pool.Exec(ctx,
+		"CALL refresh_continuous_aggregate('readings_1s', $1::timestamptz, $2::timestamptz)",
+		base.Add(-time.Hour), base.Add(time.Hour)); err != nil {
+		t.Fatalf("refresh 1s cagg: %v", err)
+	}
 
 	// 30s buckets over a 60s span -> 2 buckets, each averaging 6 readings.
 	buckets, err := s.QuerySeries(ctx, source, "OC", base, base.Add(60*time.Second), "30s")
@@ -136,6 +144,39 @@ func TestIntegration_RollupSeries(t *testing.T) {
 	}
 	if buckets[0].Value != 29.5 || buckets[1].Value != 89.5 {
 		t.Fatalf("rollup values = %v/%v, want 29.5/89.5", buckets[0].Value, buckets[1].Value)
+	}
+}
+
+func TestIntegration_Rollup1sSeries(t *testing.T) {
+	s, ctx := newTestStore(t)
+	source := uniqueSource("itest-rollup1s")
+	base := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+
+	// 10 one-second readings: value i at base+i seconds.
+	var batch []Reading
+	for i := 0; i < 10; i++ {
+		batch = append(batch, Reading{Source: source, Metric: "HF", TS: base.Add(time.Duration(i) * time.Second), Value: float64(i)})
+	}
+	if _, err := s.InsertReadings(ctx, batch); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx,
+		"CALL refresh_continuous_aggregate('readings_1s', $1::timestamptz, $2::timestamptz)",
+		base.Add(-time.Hour), base.Add(time.Hour)); err != nil {
+		t.Fatalf("refresh 1s cagg: %v", err)
+	}
+
+	// A 5-second step (1s..59s) routes to readings_1s. Expect 2 buckets:
+	// avg(0..4)=2, avg(5..9)=7 — exact weighted re-bucketing of 1s buckets.
+	buckets, err := s.QuerySeries(ctx, source, "HF", base, base.Add(10*time.Second), "5s")
+	if err != nil {
+		t.Fatalf("1s rollup query: %v", err)
+	}
+	if len(buckets) != 2 {
+		t.Fatalf("got %d buckets, want 2", len(buckets))
+	}
+	if buckets[0].Value != 2 || buckets[1].Value != 7 {
+		t.Fatalf("1s rollup values = %v/%v, want 2/7", buckets[0].Value, buckets[1].Value)
 	}
 }
 

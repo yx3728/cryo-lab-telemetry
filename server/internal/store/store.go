@@ -117,24 +117,33 @@ type Bucket struct {
 
 // QuerySeries returns the channel downsampled into `step`-wide time buckets
 // (TimescaleDB's time_bucket), averaging the readings in each bucket. step is a
-// Postgres interval string such as "5s" or "1m".
-// rollupThresholdSeconds is the step at/above which we read the pre-bucketed
-// 1-minute continuous aggregate instead of raw readings. Below it (5s/30s steps,
-// i.e. narrow live ranges) we read raw for full resolution; the raw row counts
-// there are small. At/above it (wide ranges) the rollup avoids scanning millions
-// of raw points.
-const rollupThresholdSeconds = 60
+// Step thresholds choosing which pre-bucketed continuous aggregate to read:
+//
+//	step >= 60s  -> readings_1m   (wide ranges)
+//	1s..59s      -> readings_1s   (sub-minute ranges on high-rate channels)
+//	< 1s         -> raw readings  (full resolution; only if a finer step is asked)
+//
+// Reading a rollup avoids scanning millions of raw points as data accumulates.
+const (
+	rollup1mThresholdSeconds = 60
+	rollup1sThresholdSeconds = 1
+)
 
 // QuerySeries returns the channel downsampled into `step`-wide buckets, choosing
-// raw readings or the 1-minute continuous aggregate based on the step.
+// the coarsest rollup whose resolution still satisfies the requested step.
 func (s *Store) QuerySeries(ctx context.Context, source, metric string, from, to time.Time, step string) ([]Bucket, error) {
-	if stepSeconds(step) >= rollupThresholdSeconds {
-		return s.querySeriesRollup(ctx, source, metric, from, to, step)
+	sec := stepSeconds(step)
+	switch {
+	case sec >= rollup1mThresholdSeconds:
+		return s.querySeriesRollup(ctx, "readings_1m", source, metric, from, to, step)
+	case sec >= rollup1sThresholdSeconds:
+		return s.querySeriesRollup(ctx, "readings_1s", source, metric, from, to, step)
+	default:
+		return s.querySeriesRaw(ctx, source, metric, from, to, step)
 	}
-	return s.querySeriesRaw(ctx, source, metric, from, to, step)
 }
 
-// querySeriesRaw buckets raw readings — accurate, used for narrow/live ranges.
+// querySeriesRaw buckets raw readings — full resolution.
 func (s *Store) querySeriesRaw(ctx context.Context, source, metric string, from, to time.Time, step string) ([]Bucket, error) {
 	const q = `
 		SELECT time_bucket($1::interval, ts) AS bucket, avg(value) AS value
@@ -145,14 +154,15 @@ func (s *Store) querySeriesRaw(ctx context.Context, source, metric string, from,
 	return s.scanBuckets(ctx, q, step, source, metric, from, to)
 }
 
-// querySeriesRollup re-buckets the 1-minute continuous aggregate to the requested
-// step. The bucket averages are weighted by their row counts so the coarser
-// average is exact, not an average-of-averages.
-func (s *Store) querySeriesRollup(ctx context.Context, source, metric string, from, to time.Time, step string) ([]Bucket, error) {
-	const q = `
+// querySeriesRollup re-buckets a continuous aggregate (readings_1m / readings_1s)
+// to the requested step. Bucket averages are weighted by their row counts, so the
+// coarser average is exact, not an average-of-averages. `view` is a fixed
+// internal identifier (never user input), so concatenating it is injection-safe.
+func (s *Store) querySeriesRollup(ctx context.Context, view, source, metric string, from, to time.Time, step string) ([]Bucket, error) {
+	q := `
 		SELECT time_bucket($1::interval, bucket) AS b,
 		       sum(avg_value * n_value) / sum(n_value) AS value
-		FROM readings_1m
+		FROM ` + view + `
 		WHERE source = $2 AND metric = $3 AND bucket >= $4 AND bucket < $5
 		GROUP BY b
 		ORDER BY b`
