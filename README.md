@@ -125,7 +125,30 @@ for the build/test/deploy record.
 - **Load / chaos:** mock producers with injected latency, packet loss and
   disconnects, asserting **no data loss**, **correct ordering**, and stability
   under a simulated high-frequency producer plus multiple concurrent producers.
-  Numbers are recorded in [`WORKLOG.md`](./WORKLOG.md).
+
+  Representative run (5 concurrent producers incl. one high-frequency, 3600
+  readings, through a proxy injecting 15 ms latency / 15% drop / 10% ambiguous
+  failures / a 3 s hard outage):
+
+  ```
+  proxy: forwarded=90 dropped=21 ambiguous=7 outage_blocked=13, peak buffer depth=76 batches
+  totals: generated=3600 stored=3600 loss=0 duplicates=0  ~665 readings/s through chaos
+  RESULT: PASS — no data loss, correct ordering, idempotent under chaos
+  ```
+
+How to run the tests:
+
+```bash
+# Go unit tests (hermetic)
+cd server && go test ./...
+# Go integration tests (against a running TimescaleDB)
+TEST_DATABASE_URL=postgres://labmon:labmon-dev-password@localhost:5432/labmon?sslmode=disable \
+  go test ./internal/store -run Integration
+# Python collector unit tests
+cd collector && ./.venv/bin/python -m pytest tests/ -q
+# Load / chaos test (dev stack up, with a 'loadtest' ingest token)
+INGEST_TOKEN=loadtest-token ./collector/.venv/bin/python mock/load_test.py
+```
 
 ## License
 

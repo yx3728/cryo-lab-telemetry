@@ -110,3 +110,31 @@ test numbers, deploy verification, and scope decisions.
   (log-only mode — honest, no SMTP/Slack secrets configured locally). Precise
   debounce-window-expiry / re-arm behaviour is covered deterministically by the
   step-7 unit tests with an injected clock.
+
+## 2026-06-18 — Step 7: tests (unit + integration + load/chaos)
+
+- **Go unit tests** (no DB, always run): auth (token resolution, JWT round-trip,
+  expired/tampered/wrong-secret rejection, credential check); alert (`Evaluate`
+  cases + debounce window with injected clock); ingest `validateReading`; series
+  `resolveStep`/`parseTimeRange`; all three auth planes via httptest middleware;
+  metrics tracker. `go test ./...` → all packages **ok**.
+- **Go integration tests** (gated on `TEST_DATABASE_URL`): against live
+  TimescaleDB — ingest **idempotency** (replay writes 0 rows; partial overlap
+  writes only the new row), `time_bucket` series averaging, config + threshold
+  upsert/read. All **PASS**.
+- **Python collector tests** (pytest, 11 passed): DiskBuffer order/atomicity/
+  restart-counter/remove; MockReader channels + RFC3339 timestamp; `post_batch`
+  retry semantics (200→OK, 4xx→PERMANENT-no-retry, 5xx/conn/429→retry, exhaust→
+  TRANSIENT).
+- **Load/chaos test** (`mock/`, the one big test) — 5 concurrent producers (4
+  normal + 1 high-frequency, 2000 readings; the planned-fast-channel stand-in),
+  **3600 readings** through a fault-injecting proxy: 15 ms latency, 15% drop,
+  10% ambiguous (forward-then-hide-success), and a 3 s hard outage. Producers use
+  the collector's real DiskBuffer + post_batch. Proxy saw 131 requests for 90
+  batches (41 retries); **peak on-disk buffer depth 76 batches** during the
+  outage. Verified straight from the DB:
+  **loss = 0, duplicates = 0, ordering correct for every producer**
+  (the 7 ambiguous double-writes absorbed by idempotent ingest), ~**665
+  readings/s sustained through the chaos**. `RESULT: PASS`. This is the evidence
+  for "reliable delivery + headroom for a planned high-frequency channel" — not a
+  web-scale-QPS claim.
