@@ -12,6 +12,12 @@ no remote control of sampling) with a self-hosted stack the lab fully owns.
 
 **Live:** `https://3.220.132.187.sslip.io`
 
+![Dashboard](docs/dashboard.png)
+
+*Public dashboard: log-scale vacuum pressures and linear cryogenic temperatures
+(note the STM thermal spike to ~21 K decaying back to 4.2 K), with live values,
+time-range selection, per-channel CSV export, and a JWT-gated admin panel.*
+
 ---
 
 ## What it does

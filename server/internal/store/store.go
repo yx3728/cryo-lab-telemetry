@@ -131,6 +131,39 @@ func (s *Store) QuerySeries(ctx context.Context, source, metric string, from, to
 	return out, rows.Err()
 }
 
+// Channel is the latest known state of one (source, metric) pair, used by the
+// dashboard to discover which channels actually have data.
+type Channel struct {
+	Source    string    `json:"source"`
+	Metric    string    `json:"metric"`
+	LastTS    time.Time `json:"last_ts"`
+	LastValue float64   `json:"last_value"`
+}
+
+// Channels returns the most recent reading per (source, metric), ordered for
+// stable display.
+func (s *Store) Channels(ctx context.Context) ([]Channel, error) {
+	const q = `
+		SELECT DISTINCT ON (source, metric) source, metric, ts, value
+		FROM readings
+		ORDER BY source, metric, ts DESC`
+	rows, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Channel
+	for rows.Next() {
+		var c Channel
+		if err := rows.Scan(&c.Source, &c.Metric, &c.LastTS, &c.LastValue); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // --- config (control plane key/value) ---------------------------------------
 
 // GetConfigValue reads a single config key.

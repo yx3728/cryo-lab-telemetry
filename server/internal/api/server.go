@@ -72,6 +72,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/login", s.handleLogin)
 
 		// Read plane: public, no auth.
+		r.Get("/channels", s.handleChannels)
 		r.Get("/series", s.handleSeries)
 		r.Get("/export.csv", s.handleExportCSV)
 		r.Get("/config", s.handleGetConfig)

@@ -73,3 +73,20 @@ test numbers, deploy verification, and scope decisions.
   sent=112, dropped=0, queued=0**; SIGINT → graceful shutdown with the buffer
   fully drained to 0. Reliability features (buffer/retry) get hammered in the
   step-7 chaos test.
+
+## 2026-06-18 — Step 4: read API + React dashboard
+
+- Added public `GET /api/channels` (latest value per source/metric) for UI
+  discovery. Server restarted; endpoint returns the 7 active channels.
+- **web/** Vite + React 18 + TypeScript (strict) + Recharts. Relative API paths
+  only (Vite proxy in dev, Caddy in prod). Public charts: log-scale Pressure
+  (LL/PC/OC/PREP) + linear Temperature (SORB/1K Pot/He3 Pot/STM), live 5 s
+  refresh, time-range presets (15m…7d), per-channel CSV links, latest-value stat
+  chips. JWT-gated admin panel for sampling interval + thresholds.
+- **Verified:** `npm run build` clean (tsc strict + vite). Vite dev server
+  serves the app and proxies live `/api/channels`. Captured a **headless-Chrome
+  screenshot** of the running dashboard (saved to `docs/dashboard.png`): both
+  charts render real mock data, the STM spike to ~21 K is visible decaying to
+  4.2 K, log pressure axis correct, LL correctly absent (off), admin login form
+  shown. Control plane (login → JWT → PUT config) already verified via curl in
+  step 2.
