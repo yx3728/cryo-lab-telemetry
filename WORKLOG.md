@@ -182,10 +182,11 @@ test numbers, deploy verification, and scope decisions.
   all mock-tested first. Wiring is left as the documented, reversible final
   action for the lab owner.
 
-## Status: MVP complete
+## Milestone: MVP complete (mock-tested) — superseded by production cutover below
 
 All 9 steps done. System deployed and verified on AWS; mock-tested end-to-end
-including chaos/load; ready for the real-lab cutover (WIRING.md).
+including chaos/load; ready for the real-lab cutover (WIRING.md). The real-lab
+wiring, backfill, and production status follow in the later entries.
 
 ## 2026-06-19 — Load + reliability hardening pass (see BENCHMARKS.md)
 
@@ -228,3 +229,85 @@ clean live demo.
 **Scaling roadmap (documented, deliberately NOT built):** batching ✓ → continuous
 aggregates ✓ → bigger instance → managed TimescaleDB → queue/broker → horizontal.
 Unnecessary at < 10 instruments (100–1000× headroom). See BENCHMARKS.md.
+
+## 2026-06-19 — Wired to the real lab: NOW DEPLOYED, INGESTING REAL DATA
+
+This is the cutover from mock to production. The system now ingests **real
+instrument data** from the lab's Unisoku STM cryostat. See
+`docs/HARDWARE_INTERFACE.md`.
+
+- **Hardware interface understood (Lake Shore Model 350):** RS-232 over COM6 at
+  **57600 8-O-1** (unusual 7-bit/odd framing), SCPI `KRDG?` reads; a serial↔TCP
+  bridge (port 5001, shared-secret) multiplexes clients; channels A/B/C/D →
+  SORB / 1K Pot / He3 Pot / STM.
+- **Constraint:** don't modify the lab's acquisition software (an original
+  InfluxDB temperature logger + a PhD student's QCoDeS GUI suite that owns the
+  vacuum gauge on an exclusive serial port and publishes to InfluxDB Cloud).
+- **Collision analysis drove the design:** temperatures go through the multi-client
+  TCP bridge (safe to add a client); the gauge is exclusive serial (cannot
+  double-open) but the suite already publishes to InfluxDB (many readers allowed).
+- **Final architecture (lab unchanged):**
+  - `forwarder/` — read-only **InfluxDB → AWS mirror** on the EC2 box, replicating
+    both temps + pressures (the Grafana view) into AWS. Idempotent (keeps each
+    point's InfluxDB timestamp); skips off-gauge zeros.
+  - `lab/ls350_fast_aws.py` — a **second bridge client** adding **1 Hz** temps to
+    AWS, polling `GET /api/config` so the dashboard controls its rate.
+- **Verified live:** stopped the demo mock feed; confirmed only the real
+  temperature channels keep refreshing while pressures came via the forwarder.
+  Later confirmed **1 Hz** producer output (1.00 pt/s) and that an admin change to
+  **5 s** via the dashboard was adopted by the producer (closed control loop).
+- **Surprise:** EC2 had no IAM role / no AWS CLI, so SES couldn't be provisioned
+  from the box — initially planned SES, ended on Gmail SMTP at the lab's request.
+
+## 2026-06-19 — 30-day history backfill (nothing lost)
+
+- InfluxDB Cloud free tier discards data after 30 days. Wrote a one-time,
+  idempotent backfill (`forwarder/backfill.py`) that imported the full retained
+  window day-by-day: **read 257,845 points, inserted 257,597** (248 already
+  present, ~42k off-gauge zeros skipped), spanning **2026-05-20 → now**.
+- Refreshed the 1-minute continuous aggregate over the range; a 30-day query
+  returns the full month fast (720 points, ~0.12 s). Going forward AWS retains
+  what InfluxDB drops.
+
+## 2026-06-19 — Purged all mock data (production is 100% real)
+
+- Cut over from mock to real cleanly: the demo mock fed channel `PC` (the gauge
+  has no PC), so the last `PC` point marked the mock boundary. Deleted **45,933
+  mock-era rows** (kept the real rows after the cutover), cleared mock
+  `alert_log`, refreshed the rollup, VACUUMed. Dashboard now shows only real data.
+
+## 2026-06-19 — Dashboard usability + alerting (live, on real data)
+
+- **Admin login** (credentials in box `.env`) → change sampling interval / alert
+  thresholds; verified live (set 5 s).
+- **All-channels CSV download** button (public; data is already public, EC2 is
+  fixed-cost — confirmed no per-download cost concern).
+- **30 d / 90 d range presets** + coarser server step tiers so the full history is
+  viewable in the browser.
+- **1-second continuous aggregate** (`readings_1s`) + routing (≥60 s → 1 m,
+  1–59 s → 1 s, else raw); enabled **real-time aggregation** on both rollups so
+  live views include the newest points (caught and fixed: recent TimescaleDB
+  defaults aggregates to materialized-only). Future-proofs high-rate data.
+- **Email alerting LIVE:** vacuum gauges (LL/OC/PREP/PC) alert when **p > 1e-8
+  Torr**, via Gmail SMTP, with per-metric debounce **+ a daily email cap**
+  (`ALERT_MAX_EMAILS_PER_DAY`). Verified end-to-end — a real threshold cross sent
+  an email that was received. Credential lives only in the box `.env` (chmod 600),
+  never in git.
+
+## 2026-06-19 — Published as portfolio
+
+- Wrote a production `README.md` (live link + real-data screenshot, rendered &
+  visually checked) and a full `REPORT.md` (technical record for résumé writing).
+- Pre-publish hygiene: scrubbed all credentials/PII from files **and** commit
+  history; every commit re-authored as `yx3728`, `Co-Authored-By` trailers
+  stripped.
+- Pushed public: **github.com/yx3728/cryo-lab-telemetry**, with **GitHub Actions
+  CI** (Go unit + DB-integration against a TimescaleDB service, Python pytest, web
+  build) — **green on first run**.
+
+## Status: IN PRODUCTION — deployed on AWS, ingesting real instrument data
+
+Live dashboard: `https://3.220.132.187.sslip.io`. Real cryostat temperatures
+(1 Hz) and vacuum pressures flowing from the lab; 30 days of history preserved and
+growing; threshold email alerting active; remote sampling control working;
+public, tested (CI green), and documented.
