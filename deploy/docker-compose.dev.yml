@@ -1,0 +1,47 @@
+# Local development stack: TimescaleDB + the Go API, no TLS.
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.dev.yml up -d --build
+#
+# The DB is exposed on localhost:5432 so you can also run the API directly with
+# `go run ./cmd/server` against it for a fast edit loop (set DATABASE_URL to
+# postgres://labmon:...@localhost:5432/labmon?sslmode=disable).
+name: lab-monitor-dev
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.17.2-pg17
+    environment:
+      POSTGRES_USER: labmon
+      POSTGRES_PASSWORD: labmon-dev-password
+      POSTGRES_DB: labmon
+    ports:
+      - "5432:5432"
+    volumes:
+      - dev_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labmon -d labmon"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  go-api:
+    build:
+      context: ../server
+    environment:
+      DATABASE_URL: postgres://labmon:labmon-dev-password@timescaledb:5432/labmon?sslmode=disable
+      HTTP_ADDR: ":8080"
+      INGEST_TOKENS: "unisoku-stm:dev-ingest-token"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "dev-admin-password"
+      JWT_SECRET: "dev-jwt-secret-at-least-16-bytes-long"
+      JWT_TTL_HOURS: "24"
+      ALERT_DEBOUNCE_SECONDS: "60"
+    ports:
+      - "8080:8080"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+volumes:
+  dev_pgdata:
