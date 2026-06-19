@@ -46,8 +46,12 @@ BRIDGE_TOKEN = CFG["bridge_token"]
 AWS_INGEST_URL = CFG["aws_ingest_url"]
 AWS_TOKEN = CFG["aws_token"]
 SOURCE = CFG.get("source", "unisoku-stm")
-INTERVAL = float(CFG.get("sample_interval_s", 1.0))
+INTERVAL = float(CFG.get("sample_interval_s", 1.0))      # starting rate; the
+# dashboard (admin → sampling interval) can change this live (see config poll).
 HTTP_TIMEOUT = float(CFG.get("http_timeout_s", 5.0))
+CONFIG_POLL_S = float(CFG.get("config_poll_s", 15.0))
+# The public config endpoint lives next to /ingest on the same host.
+CONFIG_URL = AWS_INGEST_URL.rsplit("/ingest", 1)[0] + "/api/config"
 
 # LS350 input channel -> AWS dashboard metric name.
 CHANNELS = {"A": "SORB", "B": "1K Pot", "C": "He3 Pot", "D": "STM"}
@@ -69,31 +73,57 @@ def read_kelvin(channel: str) -> float | None:
         return None
 
 
-def post(batch: list[dict]) -> None:
+def post(session: requests.Session, batch: list[dict]) -> None:
     """Best-effort POST; never crashes the loop."""
     if not batch:
         return
     try:
-        requests.post(AWS_INGEST_URL, json=batch,
-                      headers={"X-Api-Key": AWS_TOKEN}, timeout=HTTP_TIMEOUT)
+        session.post(AWS_INGEST_URL, json=batch,
+                     headers={"X-Api-Key": AWS_TOKEN}, timeout=HTTP_TIMEOUT)
     except requests.RequestException as exc:
         print(f"[aws] post failed: {exc}", flush=True)
 
 
+def fetch_interval(session: requests.Session, current: float) -> float:
+    """Read the admin-set sampling interval from the dashboard config (public).
+    Returns `current` unchanged on any error, so the dashboard being unreachable
+    never disrupts logging."""
+    try:
+        resp = session.get(CONFIG_URL, timeout=HTTP_TIMEOUT)
+        if resp.ok:
+            v = float(resp.json().get("sampling_interval_seconds", current))
+            if v > 0:
+                return v
+    except (requests.RequestException, ValueError):
+        pass
+    return current
+
+
 def main() -> None:
+    session = requests.Session()
+    interval = fetch_interval(session, INTERVAL)  # adopt the dashboard's value at start
+    last_cfg = time.time()
     print(f"ls350_fast_aws: {BRIDGE_HOST}:{BRIDGE_PORT} -> {AWS_INGEST_URL} "
-          f"source={SOURCE} every {INTERVAL:g}s", flush=True)
+          f"source={SOURCE} every {interval:g}s (rate controlled from the dashboard)", flush=True)
     while True:
         start = time.time()
+        # Periodically adopt the dashboard's sampling interval (the control loop).
+        if time.time() - last_cfg >= CONFIG_POLL_S:
+            new = fetch_interval(session, interval)
+            if new != interval:
+                print(f"[config] sampling interval {interval:g}s -> {new:g}s", flush=True)
+                interval = new
+            last_cfg = time.time()
+
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         batch = []
         for ch, metric in CHANNELS.items():
             value = read_kelvin(ch)
             if value is not None:
                 batch.append({"source": SOURCE, "metric": metric, "ts": ts, "value": value})
-        post(batch)
+        post(session, batch)
         # keep a steady cadence regardless of how long the reads took
-        time.sleep(max(0.0, INTERVAL - (time.time() - start)))
+        time.sleep(max(0.0, interval - (time.time() - start)))
 
 
 if __name__ == "__main__":

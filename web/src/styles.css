@@ -37,6 +37,7 @@ body {
 }
 .range.active { background: var(--accent); border-color: var(--accent); color: #04101f; font-weight: 600; }
 .live-toggle { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
+.download { text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; display: inline-flex; align-items: center; cursor: pointer; }
 
 .stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
 .stat {

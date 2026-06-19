@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Channel, getChannels } from "./api";
+import { Channel, csvAllUrl, getChannels } from "./api";
 import { metaFor } from "./channels";
 import { ChartCard } from "./components/ChartCard";
 import { AdminPanel } from "./components/AdminPanel";
@@ -76,6 +76,9 @@ export default function App() {
               refresh
             </button>
           )}
+          <a className="btn-secondary download" href={csvAllUrl(source, from, to)} title="Download all channels for the selected time range as CSV">
+            ⬇ CSV
+          </a>
         </div>
       </header>
 

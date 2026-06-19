@@ -62,6 +62,14 @@ export function seriesUrl(source: string, metric: string, from: Date, to: Date, 
   return `/api/series?${p.toString()}`;
 }
 
+// csvAllUrl downloads every channel of a source over the range in one CSV
+// (metric omitted → server exports all channels, long format).
+export function csvAllUrl(source: string, from: Date, to: Date, step?: string): string {
+  const p = new URLSearchParams({ source, from: from.toISOString(), to: to.toISOString() });
+  if (step) p.set("step", step);
+  return `/api/export.csv?${p.toString()}`;
+}
+
 export function csvUrl(source: string, metric: string, from: Date, to: Date, step?: string): string {
   const p = new URLSearchParams({
     source,

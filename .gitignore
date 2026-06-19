@@ -43,9 +43,10 @@ bench/bench
 # --- private lab scripts (never commit) ---
 _lab_scripts_DONOTGIT/
 
-# --- local credentials for the lab producer (never commit) ---
+# --- local credentials (never commit) ---
 lab/credentials.local.json
 **/credentials.local.json
+deploy/admin_credentials.local.txt
 
 # --- OS / editor ---
 .DS_Store
