@@ -95,55 +95,65 @@ persistently/separately.)
 > here**: `url=https://<region>.aws.cloud2.influxdata.com`, `org=<lab org>`,
 > `token=<INFLUXDB_TOKEN>`, `bucket=Temperature_Logger`.
 
-## 5. Where AWS ingest plugs in (the last piece)
+## 5. AWS mirroring architecture (final)
 
-The self-hosted system in this repo wants the **same readings** the logger already
-has. The integration is a **single addition inside the existing loop** — the
-hardware read path and the InfluxDB write are untouched (see
-`U_Lakeshore350_Logger_aws.py`):
+The guiding constraint: **leave the lab exactly as it is** — the original InfluxDB
+logger and the PhD student's QCoDeS acquisition suite (which owns the vacuum gauge
+on an exclusive serial port and already publishes pressures to InfluxDB) are not
+modified. Two collision considerations drive the design:
 
-1. Each loop, collect the four `KRDG?` readings into a small batch of
-   `{source, metric, ts, value}` (mapping labels → AWS metric names per §3, `ts`
-   = current UTC RFC3339).
-2. After the InfluxDB writes, `POST` the batch once to
-   `https://3.220.132.187.sslip.io/ingest` with header `X-Api-Key: <unisoku-stm
-   ingest token>`.
-3. The POST is **best-effort** (`try/except`, 5 s timeout): if AWS is unreachable
-   the InfluxDB/Grafana logging the lab depends on is **never** affected. The
-   server's ingest is **idempotent** (`(source, metric, ts)` unique), so a
-   retried or duplicated point is harmless.
+- **LS350 / temperatures** are reached through the TCP **bridge** (`port 5001`),
+  which is built for many clients (server-side lock). So a second temperature
+  client is safe.
+- **The vacuum gauge** (`COM1`) is read over an **exclusive** serial port owned by
+  the suite — a second process can't open it. But the suite already publishes
+  pressures to **InfluxDB Cloud**, which allows many readers.
 
-Result: every 20 s the readings go to **both** InfluxDB/Grafana **and** the AWS
-dashboard. Rate is the same single `time.sleep(20)`.
+So AWS is fed by two additions, neither of which disturbs the lab:
+
+1. **InfluxDB → AWS forwarder** (`forwarder/`, runs on the EC2 box). A read-only
+   InfluxDB consumer that mirrors both `Temperature_Logger` and `Pressure_Logger`
+   into AWS — replicating the Grafana view. Idempotent (each point keeps its
+   InfluxDB timestamp), skips a gauge reading 0 (off, not log-plottable).
+2. **High-rate temperature producer** (`lab/ls350_fast_aws.py`, runs on the lab
+   PC). A *second* bridge client that reads `KRDG?` at **1 s** and POSTs only to
+   AWS — adding high-resolution temperatures the InfluxDB/Grafana path doesn't
+   capture. The original InfluxDB logger keeps running as the slow client.
 
 ```
- ... U_Lakeshore350_Logger_aws.py loop (every 20 s):
-        read A/B/C/D via the bridge ──▶ InfluxDB Cloud ──▶ Grafana   (unchanged)
-                                   └──▶ POST /ingest    ──▶ AWS lab-monitor  (added)
+ Lab PC                                           InfluxDB Cloud        EC2
+ ┌───────────────────────────────────────┐
+ │ LS350 bridge (5001) ── original logger ──────▶ Temperature_Logger ──┐
+ │           │           (slow, unchanged)                              │
+ │           └────────── ls350_fast_aws.py ─────────────────────────┐  │  forwarder
+ │                       (1 s, AWS only) ──────────────────────────┐│  ├─▶ (read InfluxDB)
+ │ suite: gauge COM1 ── pressure logger ────────▶ Pressure_Logger ─┼┼──┘        │
+ └───────────────────────────────────────┘                        ││           ▼
+                                                                   │└──────▶ AWS /ingest
+                                                                   └──────▶ AWS /ingest
+                                                          (temps: dense 1 s + slow mirror;
+                                                           pressures: from forwarder)
 ```
+
+All AWS posts are idempotent (`(source, metric, ts)` unique), so the slow mirror
+and the 1 s producer coexisting on the same channels never create duplicates.
 
 ## 6. Going live — operational notes
 
-- **Dependency:** the dual-upload logger needs `requests`
-  (`pip install requests` / `conda install requests`). Once.
-- **Token:** set the `unisoku-stm` ingest key (the `INGEST_TOKEN` value in
-  `deploy/.env` on the EC2 box) via the `LABMON_TOKEN` env var (e.g. in the
-  `.bat`) or by pasting it into `AWS_TOKEN` in the script.
-- **Stop the demo feed:** the cloud runs a mock producer on `source=unisoku-stm`
-  so the dashboard isn't empty pre-launch. When real data starts flowing, stop it
-  so the dashboard shows only real readings:
-  `cd deploy && docker compose stop collector`.
-- **Verify:** within ~20 s the four temperatures appear on
-  `https://3.220.132.187.sslip.io`; `/metrics` shows `unisoku-stm` `last_seen`
-  advancing.
-- **Rollback:** revert to `Start_temperature_logger.bat` / the original logger.
-  Nothing about the InfluxDB/Grafana path changed, so the two can run in parallel
-  during the transition.
+- **Forwarder (EC2):** a default service in `deploy/docker-compose.yml`; needs the
+  lab's InfluxDB credentials in `deploy/.env` on the box. Replaces the demo mock
+  feed (which stays off — `docker compose stop collector`).
+- **Fast producer (lab PC):** copy `lab/`, `pip install requests`, fill
+  `credentials.local.json` (bridge host/token + the `unisoku-stm` ingest key), run
+  `ls350_fast_aws.py`. Runs alongside the unchanged original InfluxDB logger.
+- **Verify:** temperatures refresh on `https://3.220.132.187.sslip.io` at ~1 s
+  (producer) with a slow mirror baseline; pressures (LL/OC/PREP) come via the
+  forwarder; `/metrics` `last_seen` advances.
+- **Rollback:** stop `ls350_fast_aws.py` (lab untouched) and/or
+  `docker compose stop forwarder`. The InfluxDB/Grafana path is never modified.
 
-## 7. Out of scope (this folder)
+## 7. The `PC` gauge
 
-This folder is the **temperature** path (Lake Shore 350, 4 channels). The vacuum
-**pressure** channels (`LL`, `PC`, `OC`, `PREP`) shown on the dashboard come from
-a **separate gauge logger** not in this folder; wiring those to AWS is the same
-one-loop addition applied to that logger (map gauge labels → `LL/PC/OC/PREP`,
-batch, `POST /ingest`).
+The vacuum controller returns **three** values → `LL`, `OC`, `PREP` (the
+`Pressure_Logger`). The dashboard also has a `PC` channel, but **no `PC` is logged
+by this gauge**, so `PC` stays empty on AWS until its source is identified.

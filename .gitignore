@@ -40,6 +40,13 @@ bench/bench_tokens.env
 bench/*.csv
 bench/bench
 
+# --- private lab scripts (never commit) ---
+_lab_scripts_DONOTGIT/
+
+# --- local credentials for the lab producer (never commit) ---
+lab/credentials.local.json
+**/credentials.local.json
+
 # --- OS / editor ---
 .DS_Store
 .idea/

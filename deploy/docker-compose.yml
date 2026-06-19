@@ -72,6 +72,26 @@ services:
       timeout: 3s
       retries: 20
 
+  # InfluxDB -> AWS forwarder: mirrors the lab's InfluxDB Cloud data (temps +
+  # pressures) into AWS, so the dashboard replicates Grafana without touching lab
+  # hardware. Read-only InfluxDB consumer; safe alongside the lab's suite.
+  forwarder:
+    build:
+      context: ../forwarder
+    restart: unless-stopped
+    environment:
+      INFLUX_URL: ${INFLUX_URL}
+      INFLUX_TOKEN: ${INFLUX_TOKEN}
+      INFLUX_ORG: ${INFLUX_ORG}
+      INFLUX_TEMP_BUCKET: ${INFLUX_TEMP_BUCKET:-Temperature_Logger}
+      INFLUX_PRESSURE_BUCKET: ${INFLUX_PRESSURE_BUCKET:-Pressure_Logger}
+      INGEST_URL: http://go-api:8080
+      INGEST_TOKEN: ${INGEST_TOKEN}
+      SOURCE: unisoku-stm
+      FORWARDER_POLL_SECONDS: ${FORWARDER_POLL_SECONDS:-15}
+    depends_on:
+      - go-api
+
   # Optional demo feed — mock instrument data so the dashboard is live before the
   # real lab PC is wired. Enabled only with `--profile mockfeed`.
   collector:

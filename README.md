@@ -90,6 +90,8 @@ collector/   Python edge collector — RealReader (PyVISA) + MockReader,
              batching, retry+backoff, offline disk buffer, config polling
 mock/        Chaos + load harness (latency/loss/disconnect; high-freq + N producers)
 bench/       Load + reliability harness (Go) used for BENCHMARKS.md
+forwarder/   InfluxDB → AWS mirror (runs on EC2; replicates the lab's Grafana data)
+lab/         High-rate (1 s) LS350 → AWS producer for the lab PC (creds git-ignored)
 web/         React + TS + Recharts dashboard (public charts + admin panel)
 deploy/      docker-compose.yml (prod) + Caddyfile (auto-HTTPS)
 PLAN.md      Architecture, design decisions, scope rationale

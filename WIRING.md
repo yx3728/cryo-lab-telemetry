@@ -9,12 +9,19 @@ instrument I/O; we do **not** rewrite it.
 Nothing new is needed on the Windows PC: just **Python + `requests` + the ingest
 token**. No Go, no Docker, no Node.
 
-> **Done for the temperature path.** This has been applied to the lab's Lake Shore
-> Model 350 logger. See [`docs/HARDWARE_INTERFACE.md`](./docs/HARDWARE_INTERFACE.md)
-> for the full hardware↔software interface, and
-> [`docs/U_Lakeshore350_Logger_aws.reference.py`](./docs/U_Lakeshore350_Logger_aws.reference.py)
-> for the redacted result (the runnable copy with secrets lives on the lab PC).
-> The vacuum-pressure logger is a separate script and gets the same one-loop edit.
+> **Implemented for this lab without modifying its acquisition software.** See
+> [`docs/HARDWARE_INTERFACE.md`](./docs/HARDWARE_INTERFACE.md) for the full
+> hardware↔software interface and the final AWS mirroring architecture:
+> - [`forwarder/`](./forwarder) — an InfluxDB→AWS mirror on the EC2 box that
+>   replicates the Grafana view (temps + pressures) read-only, so it never
+>   collides with the lab's exclusive serial ports.
+> - [`lab/ls350_fast_aws.py`](./lab/ls350_fast_aws.py) — a second LS350-bridge
+>   client on the lab PC adding 1 s temperatures to AWS; the original InfluxDB
+>   logger and the PhD student's suite run unchanged.
+>
+> The minimal single-file "dual-upload logger" variant below is the simplest
+> pattern when you *can* edit a logger directly; this lab used the forwarder +
+> fast-producer split instead, to avoid touching the student's suite.
 
 ---
 
