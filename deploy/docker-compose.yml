@@ -32,7 +32,13 @@ services:
     environment:
       DATABASE_URL: postgres://labmon:${POSTGRES_PASSWORD}@timescaledb:5432/labmon?sslmode=disable
       HTTP_ADDR: ":8080"
-      INGEST_TOKENS: "unisoku-stm:${INGEST_TOKEN}"
+      # The lab source token, plus any extra per-source tokens (the planned
+      # high-frequency channel, or temporary load-test sources). EXTRA_INGEST_TOKENS
+      # must start with a leading comma, e.g. ",bench0:abc,bench1:def".
+      INGEST_TOKENS: "unisoku-stm:${INGEST_TOKEN}${EXTRA_INGEST_TOKENS:-}"
+      # pgx pool size — lifted from the default of 4 on the 2-core box, kept under
+      # Postgres' max_connections (25 on the tuned image).
+      DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}

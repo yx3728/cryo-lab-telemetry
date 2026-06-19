@@ -34,6 +34,12 @@ data/
 pgdata/
 *.log
 
+# --- bench (throwaway tokens + outputs) ---
+bench/tokens.local.json
+bench/bench_tokens.env
+bench/*.csv
+bench/bench
+
 # --- OS / editor ---
 .DS_Store
 .idea/

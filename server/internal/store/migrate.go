@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -52,8 +53,19 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return nil
 }
 
-// applyOne runs a single migration and records it, atomically.
+// noTxMarker opts a migration out of the wrapping transaction. Some TimescaleDB
+// DDL — notably CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous) —
+// cannot run inside a transaction block, so those files start with this marker
+// and we execute their statements one at a time, auto-committed.
+const noTxMarker = "-- migrate:no-transaction"
+
+// applyOne runs a single migration and records it. Normally this is atomic (DDL
+// + the schema_migrations insert in one transaction); no-transaction migrations
+// run statement-by-statement outside a transaction (see noTxMarker).
 func (s *Store) applyOne(ctx context.Context, name, sqlText string) error {
+	if strings.HasPrefix(strings.TrimSpace(sqlText), noTxMarker) {
+		return s.applyOneNoTx(ctx, name, sqlText)
+	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, sqlText); err != nil {
 			return err
@@ -61,6 +73,44 @@ func (s *Store) applyOne(ctx context.Context, name, sqlText string) error {
 		_, err := tx.Exec(ctx, `INSERT INTO schema_migrations (name) VALUES ($1)`, name)
 		return err
 	})
+}
+
+// applyOneNoTx executes each statement separately (no surrounding transaction),
+// then records the migration. Statements must be idempotent (IF NOT EXISTS),
+// since a mid-file failure cannot be rolled back.
+func (s *Store) applyOneNoTx(ctx context.Context, name, sqlText string) error {
+	for _, stmt := range splitStatements(sqlText) {
+		if _, err := s.pool.Exec(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	_, err := s.pool.Exec(ctx, `INSERT INTO schema_migrations (name) VALUES ($1)`, name)
+	return err
+}
+
+// splitStatements splits a SQL file into individual statements on semicolons,
+// dropping blanks and comment-only fragments. Adequate for our hand-written
+// migration files (no semicolons inside string literals or function bodies).
+func splitStatements(sqlText string) []string {
+	var out []string
+	for _, part := range strings.Split(sqlText, ";") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		// Skip fragments that are only line comments.
+		onlyComments := true
+		for _, line := range strings.Split(trimmed, "\n") {
+			if l := strings.TrimSpace(line); l != "" && !strings.HasPrefix(l, "--") {
+				onlyComments = false
+				break
+			}
+		}
+		if !onlyComments {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func (s *Store) appliedMigrations(ctx context.Context) (map[string]bool, error) {

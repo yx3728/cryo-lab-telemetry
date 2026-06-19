@@ -50,6 +50,9 @@ class Settings:
         self.source = os.getenv("SOURCE", "unisoku-stm")
         self.reader_kind = os.getenv("READER", "mock").lower()
         self.buffer_dir = os.getenv("BUFFER_DIR", os.path.join(os.path.dirname(__file__), "buffer"))
+        # Bounded buffer (backpressure): 0 = unbounded; >0 caps queued batches,
+        # dropping oldest on overflow so a long outage can't exhaust the disk.
+        self.buffer_max_batches = int(os.getenv("BUFFER_MAX_BATCHES", "0"))
         self.sample_interval = float(os.getenv("SAMPLE_INTERVAL_SECONDS", "5"))
         self.config_poll_seconds = float(os.getenv("CONFIG_POLL_SECONDS", "15"))
         self.http_timeout = float(os.getenv("HTTP_TIMEOUT_SECONDS", "10"))
@@ -184,8 +187,8 @@ def config_loop(session: requests.Session, settings: Settings, state: State,
 
 def status_loop(buf: DiskBuffer, stats: dict, stop: threading.Event) -> None:
     while not stop.wait(30.0):
-        log.info("status: read=%d sent=%d dropped=%d queued=%d",
-                 stats["read"], stats["sent"], stats["dropped"], buf.count())
+        log.info("status: read=%d sent=%d failed_perm=%d queued=%d buffer_dropped=%d",
+                 stats["read"], stats["sent"], stats["dropped"], buf.count(), buf.dropped)
 
 
 # --- entrypoint --------------------------------------------------------------
@@ -204,7 +207,7 @@ def main() -> None:
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = Settings()
     state = State(settings.sample_interval)
-    buf = DiskBuffer(settings.buffer_dir)
+    buf = DiskBuffer(settings.buffer_dir, max_batches=settings.buffer_max_batches)
     reader = build_reader(settings)
     session = requests.Session()
     stop = threading.Event()

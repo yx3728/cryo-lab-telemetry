@@ -21,7 +21,7 @@ func newTestStore(t *testing.T) (*Store, context.Context) {
 		t.Skip("set TEST_DATABASE_URL to run store integration tests")
 	}
 	ctx := context.Background()
-	s, err := New(ctx, url)
+	s, err := New(ctx, url, 10)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -102,6 +102,40 @@ func TestIntegration_QuerySeries(t *testing.T) {
 	}
 	if buckets[0].Value != 2.5 { // avg of 0..5
 		t.Fatalf("bucket0 avg = %v, want 2.5", buckets[0].Value)
+	}
+}
+
+func TestIntegration_RollupSeries(t *testing.T) {
+	s, ctx := newTestStore(t)
+	source := uniqueSource("itest-rollup")
+	base := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC) // minute boundary
+
+	// 120 one-second readings: value i at base+i seconds.
+	var batch []Reading
+	for i := 0; i < 120; i++ {
+		batch = append(batch, Reading{Source: source, Metric: "HF", TS: base.Add(time.Duration(i) * time.Second), Value: float64(i)})
+	}
+	if _, err := s.InsertReadings(ctx, batch); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	// Materialize the continuous aggregate over this range (cannot run in a tx).
+	if _, err := s.pool.Exec(ctx,
+		"CALL refresh_continuous_aggregate('readings_1m', $1::timestamptz, $2::timestamptz)",
+		base.Add(-time.Hour), base.Add(time.Hour)); err != nil {
+		t.Fatalf("refresh cagg: %v", err)
+	}
+
+	// A 1-minute step routes to the rollup. Expect 2 buckets: avg(0..59)=29.5,
+	// avg(60..119)=89.5 — proving the weighted re-bucketing is exact.
+	buckets, err := s.QuerySeries(ctx, source, "HF", base, base.Add(2*time.Minute), "1m")
+	if err != nil {
+		t.Fatalf("rollup query: %v", err)
+	}
+	if len(buckets) != 2 {
+		t.Fatalf("got %d rollup buckets, want 2", len(buckets))
+	}
+	if buckets[0].Value != 29.5 || buckets[1].Value != 89.5 {
+		t.Fatalf("rollup values = %v/%v, want 29.5/89.5", buckets[0].Value, buckets[1].Value)
 	}
 }
 

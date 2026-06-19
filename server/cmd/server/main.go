@@ -42,7 +42,7 @@ func run(log *slog.Logger) error {
 
 	// Database: connect (with a short retry loop so we tolerate the DB container
 	// still starting) and apply migrations.
-	st, err := connectWithRetry(ctx, cfg.DatabaseURL, log)
+	st, err := connectWithRetry(ctx, cfg.DatabaseURL, int32(cfg.DBMaxConns), log)
 	if err != nil {
 		return err
 	}
@@ -91,11 +91,11 @@ func run(log *slog.Logger) error {
 
 // connectWithRetry tolerates the database not being ready yet (common when the
 // whole stack starts together under docker-compose).
-func connectWithRetry(ctx context.Context, url string, log *slog.Logger) (*store.Store, error) {
+func connectWithRetry(ctx context.Context, url string, maxConns int32, log *slog.Logger) (*store.Store, error) {
 	const attempts = 30
 	var lastErr error
 	for i := 0; i < attempts; i++ {
-		st, err := store.New(ctx, url)
+		st, err := store.New(ctx, url, maxConns)
 		if err == nil {
 			return st, nil
 		}

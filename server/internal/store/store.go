@@ -23,8 +23,19 @@ type Store struct {
 }
 
 // New opens a pgx connection pool to databaseURL and verifies connectivity.
-func New(ctx context.Context, databaseURL string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+// maxConns caps the pool; pass <= 0 to keep pgx's default (max(4, NumCPU)). On
+// the 2-core/2 GB box the default of 4 throttles concurrent ingest, so we lift it
+// — but stay well under Postgres' max_connections (25 on the tuned box) to leave
+// headroom for migrations and admin sessions.
+func New(ctx context.Context, databaseURL string, maxConns int32) (*Store, error) {
+	cfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse db config: %w", err)
+	}
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open pool: %w", err)
 	}
@@ -107,13 +118,48 @@ type Bucket struct {
 // QuerySeries returns the channel downsampled into `step`-wide time buckets
 // (TimescaleDB's time_bucket), averaging the readings in each bucket. step is a
 // Postgres interval string such as "5s" or "1m".
+// rollupThresholdSeconds is the step at/above which we read the pre-bucketed
+// 1-minute continuous aggregate instead of raw readings. Below it (5s/30s steps,
+// i.e. narrow live ranges) we read raw for full resolution; the raw row counts
+// there are small. At/above it (wide ranges) the rollup avoids scanning millions
+// of raw points.
+const rollupThresholdSeconds = 60
+
+// QuerySeries returns the channel downsampled into `step`-wide buckets, choosing
+// raw readings or the 1-minute continuous aggregate based on the step.
 func (s *Store) QuerySeries(ctx context.Context, source, metric string, from, to time.Time, step string) ([]Bucket, error) {
+	if stepSeconds(step) >= rollupThresholdSeconds {
+		return s.querySeriesRollup(ctx, source, metric, from, to, step)
+	}
+	return s.querySeriesRaw(ctx, source, metric, from, to, step)
+}
+
+// querySeriesRaw buckets raw readings — accurate, used for narrow/live ranges.
+func (s *Store) querySeriesRaw(ctx context.Context, source, metric string, from, to time.Time, step string) ([]Bucket, error) {
 	const q = `
 		SELECT time_bucket($1::interval, ts) AS bucket, avg(value) AS value
 		FROM readings
 		WHERE source = $2 AND metric = $3 AND ts >= $4 AND ts < $5
 		GROUP BY bucket
 		ORDER BY bucket`
+	return s.scanBuckets(ctx, q, step, source, metric, from, to)
+}
+
+// querySeriesRollup re-buckets the 1-minute continuous aggregate to the requested
+// step. The bucket averages are weighted by their row counts so the coarser
+// average is exact, not an average-of-averages.
+func (s *Store) querySeriesRollup(ctx context.Context, source, metric string, from, to time.Time, step string) ([]Bucket, error) {
+	const q = `
+		SELECT time_bucket($1::interval, bucket) AS b,
+		       sum(avg_value * n_value) / sum(n_value) AS value
+		FROM readings_1m
+		WHERE source = $2 AND metric = $3 AND bucket >= $4 AND bucket < $5
+		GROUP BY b
+		ORDER BY b`
+	return s.scanBuckets(ctx, q, step, source, metric, from, to)
+}
+
+func (s *Store) scanBuckets(ctx context.Context, q, step, source, metric string, from, to time.Time) ([]Bucket, error) {
 	rows, err := s.pool.Query(ctx, q, step, source, metric, from, to)
 	if err != nil {
 		return nil, err
@@ -129,6 +175,30 @@ func (s *Store) QuerySeries(ctx context.Context, source, metric string, from, to
 		out = append(out, b)
 	}
 	return out, rows.Err()
+}
+
+// stepSeconds parses a "<n><unit>" step (e.g. "30s", "2m", "1h") to seconds.
+// Returns 0 on a malformed step, which routes to the raw (full-resolution) path.
+func stepSeconds(step string) int {
+	if len(step) < 2 {
+		return 0
+	}
+	n, err := strconv.Atoi(step[:len(step)-1])
+	if err != nil {
+		return 0
+	}
+	switch step[len(step)-1] {
+	case 's':
+		return n
+	case 'm':
+		return n * 60
+	case 'h':
+		return n * 3600
+	case 'd':
+		return n * 86400
+	default:
+		return 0
+	}
 }
 
 // Channel is the latest known state of one (source, metric) pair, used by the

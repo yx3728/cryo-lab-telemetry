@@ -18,6 +18,7 @@ import (
 type Config struct {
 	DatabaseURL string
 	HTTPAddr    string
+	DBMaxConns  int
 
 	// IngestTokens maps an opaque API token -> the single source it may write.
 	// Binding a token to one source means a leaked lab token can only forge that
@@ -56,6 +57,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		DatabaseURL:   os.Getenv("DATABASE_URL"),
 		HTTPAddr:      envOr("HTTP_ADDR", ":8080"),
+		DBMaxConns:    envInt("DB_MAX_CONNS", 10),
 		IngestTokens:  parseIngestTokens(os.Getenv("INGEST_TOKENS")),
 		AdminUsername: envOr("ADMIN_USERNAME", "admin"),
 		AdminPassword: os.Getenv("ADMIN_PASSWORD"),

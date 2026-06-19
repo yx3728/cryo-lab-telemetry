@@ -89,6 +89,7 @@ server/      Go ingest + API service (chi, pgx), embedded SQL migrations, tests
 collector/   Python edge collector — RealReader (PyVISA) + MockReader,
              batching, retry+backoff, offline disk buffer, config polling
 mock/        Chaos + load harness (latency/loss/disconnect; high-freq + N producers)
+bench/       Load + reliability harness (Go) used for BENCHMARKS.md
 web/         React + TS + Recharts dashboard (public charts + admin panel)
 deploy/      docker-compose.yml (prod) + Caddyfile (auto-HTTPS)
 PLAN.md      Architecture, design decisions, scope rationale
@@ -150,6 +151,23 @@ cd collector && ./.venv/bin/python -m pytest tests/ -q
 # Load / chaos test (dev stack up, with a 'loadtest' ingest token)
 INGEST_TOKEN=loadtest-token ./collector/.venv/bin/python mock/load_test.py
 ```
+
+## Performance & reliability (load-tested on the deployed box)
+
+A focused hardening pass measured the single-box limits **over the real network
+against the `t4g.small`** and fixed the bottlenecks ([`BENCHMARKS.md`](./BENCHMARKS.md)):
+
+- **Ingest:** batching lifts the sustainable rate ~**10×** and the ceiling ~**21×**
+  (≈1,060 → ≈22,300 readings/s). The bottleneck is **TimescaleDB CPU on 2 vCPUs**,
+  not the Go service (≈27 % CPU / 16 MiB) — measured, not assumed.
+- **Long-range reads:** a TimescaleDB **continuous aggregate** makes a 30-day query
+  **~28× faster** (~3.2 s → ~0.12 s), scanning 120× fewer rows.
+- **Reliability:** verified **no data loss** across a go-api restart, a 22 s network
+  black hole, a DB restart (rows persisted), and a **full EC2 reboot** (stack
+  self-heals via `restart: unless-stopped`). Even at ~9× the ingest ceiling,
+  0 errors / 0 loss — graceful degradation, never drops.
+- **Scaling roadmap** is documented and **deliberately not built** (no broker /
+  sharding / k8s): unnecessary at < 10 instruments with 100–1000× headroom.
 
 ## License
 

@@ -33,6 +33,17 @@ def test_counter_resumes_after_restart(tmp_path):
     assert values == [1, 2, 3]
 
 
+def test_bounded_buffer_drops_oldest(tmp_path):
+    b = DiskBuffer(tmp_path, max_batches=3)
+    for v in range(5):  # enqueue 5 into a cap-3 buffer
+        b.enqueue([{"v": v}])
+    assert b.count() == 3
+    assert b.dropped == 2
+    # The three retained batches are the NEWEST (2, 3, 4), in order.
+    values = [DiskBuffer.load(p)[0]["v"] for p in b.pending()]
+    assert values == [2, 3, 4]
+
+
 def test_remove(tmp_path):
     b = DiskBuffer(tmp_path)
     path = b.enqueue([{"v": 1}])

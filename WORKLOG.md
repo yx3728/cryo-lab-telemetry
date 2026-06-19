@@ -182,7 +182,49 @@ test numbers, deploy verification, and scope decisions.
   all mock-tested first. Wiring is left as the documented, reversible final
   action for the lab owner.
 
-## Status: complete
+## Status: MVP complete
 
 All 9 steps done. System deployed and verified on AWS; mock-tested end-to-end
 including chaos/load; ready for the real-lab cutover (WIRING.md).
+
+## 2026-06-19 — Load + reliability hardening pass (see BENCHMARKS.md)
+
+One disciplined pass against the **deployed** `t4g.small`, from the Mac over the
+real network. Full numbers in `BENCHMARKS.md`; built `bench/` (Go harness),
+migration `0002` (continuous aggregate), pgx-pool config, bounded buffer.
+
+**What actually surprised me (the point of this section):**
+- **The bottleneck is TimescaleDB CPU, not Go.** Under saturation: timescaledb
+  ~144 % CPU vs go-api ~27 % / **16 MiB RSS**, 543 MiB free (no OOM). I'd have
+  guessed the Go ingest or the WAN; the real wall is Postgres insert/index on
+  2 vCPUs. Go has enormous headroom.
+- **Postgres was already auto-tuned** by the Timescale image (`timescaledb-tune`):
+  `shared_buffers ≈ 458 MB`, `max_connections = 25`. My planned "tune
+  shared_buffers for 2 GB" fix was unnecessary — overriding would have hurt.
+  Deleted that from the plan.
+- **The long-range raw query really does blow up:** ~3,200 ms to scan 5.18 M raw
+  rows for a 30-day/1 h aggregate; the 1-minute continuous aggregate (43 k rows,
+  120× fewer) does it in ~115 ms (**~28×**). Concrete justification, not a guess.
+- **Graceful degradation beat my expectation:** at a 200,000 rd/s target (~9× the
+  measured ceiling) the box returned **0 errors and lost 0 of 1.6 M readings** —
+  it only slowed (p99 → 63 s). Retry + offline buffer + idempotency hold under
+  ~9× overload; nothing drops.
+- **Idempotency fooled my first landing check:** reusing timestamps across bench
+  runs got deduped (data landed once), so `db_rows_delta` under-counted. A nice
+  live proof of idempotency — and a reminder to vary keys when measuring loss.
+- **A client-side gotcha:** the harness's HTTP/2 client stalled on concurrent
+  large gzipped GETs against Caddy (h2 flow control / head-of-line). Forcing
+  HTTP/1.1 (a connection per in-flight request) fixed it — and models independent
+  viewers better anyway.
+
+**Headline numbers:** unbatched ingest ceiling ~1,060 rd/s; **batched ~22,300
+rd/s (~21×)**; sustainable ~10,000 rd/s at p99 ~67 ms. Long-range read ~28×
+faster via continuous aggregate. No data loss across go-api restart, a 22 s
+network black hole, a DB restart (9.3 M rows persisted), and a full EC2 reboot
+(stack self-healed in seconds). Concurrent: ~25 producers / ~40 viewers
+comfortably — far above real lab usage. Test data removed; box restored to the
+clean live demo.
+
+**Scaling roadmap (documented, deliberately NOT built):** batching ✓ → continuous
+aggregates ✓ → bigger instance → managed TimescaleDB → queue/broker → horizontal.
+Unnecessary at < 10 instruments (100–1000× headroom). See BENCHMARKS.md.

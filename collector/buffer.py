@@ -22,11 +22,18 @@ from pathlib import Path
 
 
 class DiskBuffer:
-    def __init__(self, directory: str | os.PathLike) -> None:
+    def __init__(self, directory: str | os.PathLike, max_batches: int = 0) -> None:
         self.dir = Path(directory)
         self.dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._counter = self._init_counter()
+        # Backpressure: when max_batches > 0 the queue is bounded. On overflow we
+        # drop the OLDEST batches (a sustained outage longer than the buffer can
+        # hold favours keeping the freshest data flowing once delivery recovers,
+        # rather than growing disk without bound and crashing). Drops are counted
+        # so the loss is visible, never silent. max_batches = 0 means unbounded.
+        self.max_batches = max_batches
+        self.dropped = 0
 
     def _init_counter(self) -> int:
         """Resume numbering after the highest index already on disk."""
@@ -40,6 +47,11 @@ class DiskBuffer:
 
     def enqueue(self, batch: list[dict]) -> Path:
         """Persist one batch atomically and return its path."""
+        if self.max_batches > 0:
+            pending = self.pending()
+            while len(pending) >= self.max_batches:
+                self.remove(pending.pop(0))  # drop oldest to make room
+                self.dropped += 1
         with self._lock:
             idx = self._counter
             self._counter += 1
