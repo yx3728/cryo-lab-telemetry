@@ -165,3 +165,24 @@ test numbers, deploy verification, and scope decisions.
   - Mock producer left running (compose `restart: unless-stopped`) so the
     dashboard stays live and `/metrics` uptime accrues honestly. The real lab PC
     replaces this feed per WIRING.md.
+  - Captured a headless-Chrome screenshot of the **live public site** (saved to
+    `docs/dashboard.png`): all 8 channels render from the cloud API, with a PC
+    vacuum spike and the SORB sawtooth visible.
+
+## 2026-06-19 — Step 9: WIRING.md (real-lab cutover)
+
+- Wrote `WIRING.md`: the one-file change on the lab Windows PC. Two paths:
+  (A) a drop-in `post_readings()` that POSTs the existing PyVISA readings to
+  `/ingest` with the `X-Api-Key` (Python + requests + token only — no Go/Docker/
+  Node); (B) reuse the repo collector with a `RealReader` wrapping the existing
+  GPIB queries to also get retry + offline buffering + remote sampling-interval
+  control. Exact metric names documented so data lands on the right charts.
+  Includes a parallel-run/rollback path (Grafana upload left untouched).
+- **The real lab is intentionally NOT touched** in this build — steps 2–8 were
+  all mock-tested first. Wiring is left as the documented, reversible final
+  action for the lab owner.
+
+## Status: complete
+
+All 9 steps done. System deployed and verified on AWS; mock-tested end-to-end
+including chaos/load; ready for the real-lab cutover (WIRING.md).

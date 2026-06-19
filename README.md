@@ -14,9 +14,10 @@ no remote control of sampling) with a self-hosted stack the lab fully owns.
 
 ![Dashboard](docs/dashboard.png)
 
-*Public dashboard: log-scale vacuum pressures and linear cryogenic temperatures
-(note the STM thermal spike to ~21 K decaying back to 4.2 K), with live values,
-time-range selection, per-channel CSV export, and a JWT-gated admin panel.*
+*The live deployed dashboard (`https://3.220.132.187.sslip.io`): log-scale vacuum
+pressures (note the PC excursion toward ~1e-7 Torr) and linear cryogenic
+temperatures (SORB sorb-pump regen sawtooth), with live values, time-range
+selection, per-channel CSV export, and a JWT-gated admin panel.*
 
 ---
 
