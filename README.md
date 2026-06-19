@@ -5,6 +5,7 @@ ingest, store, visualize, alert, and remotely control the vacuum and cryogenic
 instrumentation. Built end-to-end and **deployed on AWS, ingesting real
 instrument data** from the lab.
 
+[![CI](https://github.com/yx3728/cryo-lab-telemetry/actions/workflows/ci.yml/badge.svg)](https://github.com/yx3728/cryo-lab-telemetry/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white)](#)
 [![TypeScript](https://img.shields.io/badge/TypeScript-React%2018-3178C6?logo=typescript&logoColor=white)](#)
 [![TimescaleDB](https://img.shields.io/badge/TimescaleDB-PostgreSQL-336791?logo=postgresql&logoColor=white)](#)
