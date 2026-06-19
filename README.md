@@ -1,102 +1,94 @@
-# Lab Monitor — reliable multi-channel telemetry for a physics lab
+# Lab Monitor
 
-Real-time monitoring, history, alerting and remote configuration for the vacuum
-and cryogenic channels of a **Unisoku scanning-tunneling-microscope (STM)** rig.
-It replaces a Grafana free-tier dashboard (30-day retention cap, no easy export,
-no remote control of sampling) with a self-hosted stack the lab fully owns.
+**Reliable, real-time telemetry for a physics-lab scanning tunneling microscope (STM)** —
+ingest, store, visualize, alert, and remotely control the vacuum and cryogenic
+instrumentation. Built end-to-end and **deployed on AWS, ingesting real
+instrument data** from the lab.
 
-> **Status:** built and load-tested end-to-end against a high-fidelity mock of
-> the instruments, then deployed to AWS. The edge collector reuses the lab's
-> existing PyVISA instrument code, so wiring it to the real rig is a one-file
-> change (see [`WIRING.md`](./WIRING.md)).
+[![Go](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white)](#)
+[![TypeScript](https://img.shields.io/badge/TypeScript-React%2018-3178C6?logo=typescript&logoColor=white)](#)
+[![TimescaleDB](https://img.shields.io/badge/TimescaleDB-PostgreSQL-336791?logo=postgresql&logoColor=white)](#)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](#)
+[![AWS](https://img.shields.io/badge/AWS-EC2%20(ARM)-FF9900?logo=amazonaws&logoColor=white)](#)
+[![Caddy](https://img.shields.io/badge/Caddy-auto--HTTPS-1F88C0?logo=caddy&logoColor=white)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
-**Live:** `https://3.220.132.187.sslip.io`
+### 🔗 Live: **https://3.220.132.187.sslip.io**  ·  public, read-only
 
-![Dashboard](docs/dashboard.png)
+![Lab Monitor dashboard](docs/dashboard.png)
 
-*The live deployed dashboard (`https://3.220.132.187.sslip.io`): log-scale vacuum
-pressures (note the PC excursion toward ~1e-7 Torr) and linear cryogenic
-temperatures (SORB sorb-pump regen sawtooth), with live values, time-range
-selection, per-channel CSV export, and a JWT-gated admin panel.*
+*Live dashboard showing real instrument data — log-scale vacuum pressures and
+cryogenic temperatures (note the real sorb-pump regeneration: SORB warms, then the
+stage cools back to ~4 K). Live values, time-range selection (15 m … 90 d),
+per-channel CSV export, and a JWT-gated admin panel.*
 
 ---
 
-## What it does
+## Why it exists
 
-- **Ingests** batches of time-series readings (vacuum pressure in Torr,
-  temperatures in Kelvin) from an instrument PC over HTTPS.
-- **Stores** them in **TimescaleDB** (Postgres) with unlimited retention and SQL.
-- **Serves** a public, read-only **React dashboard**: per-channel live + history
-  charts, time-range selection, and CSV export.
-- **Alerts** (email / Slack, debounced) when a channel crosses a threshold.
-- **Controls** the instrument PC remotely: an admin sets the sampling interval
-  and thresholds in the UI; the collector polls and applies them — a closed
-  configuration loop.
+The lab logged to a Grafana Cloud free tier with hard limits — **30-day
+retention, no bulk export, no remote control of sampling**. Lab Monitor replaces
+it with a stack the lab fully owns: **unlimited history, one-click CSV, threshold
+email alerts, and remote configuration**, wired to the live instruments **without
+modifying the lab's existing acquisition software**.
 
 ## Architecture
 
 ```
-Lab PC (Windows, Python)          AWS EC2 (Docker)                        Browser (anywhere)
-  instruments → PyVISA  (reuse)     Caddy (auto-HTTPS, Let's Encrypt)
-        │                            ├─ Go ingest + API ── public read ──▶ React dashboard
-        ▼                            │   (3-tier auth,   ── login (JWT) ─▶ admin config UI
-  Python collector ─HTTPS POST──────▶│    idempotent writes)
-   batch · retry+backoff            └─ TimescaleDB (Postgres hypertable)
-   offline disk buffer ◀── config ── Go alerter → email / Slack
-   polls /api/config  ──────────────▶
+Lab PC (Python / PyVISA)            AWS EC2 — Docker Compose                Browser (anywhere)
+  instruments ─reuse─┐                Caddy  (reverse proxy · auto-HTTPS)
+                     ▼                 ├─ Go ingest + API ── public read ──▶ React dashboard
+  collector ─HTTPS POST /ingest─────▶ │   3-tier auth · idempotent ── JWT ─▶ admin / config
+   batch · retry · offline buffer    └─ TimescaleDB (hypertable + rollups)
+   polls /api/config ◀── control ───   Go alerter ──▶ email (debounced, capped)
 ```
 
-### Three-tier auth (a deliberate design point)
+- **Python** owns acquisition (reuses the lab's working GPIB/PyVISA code).
+- **Go** owns the cloud: concurrent, idempotent ingest + the API.
+- **TimescaleDB** owns storage: SQL, unlimited retention, fast time-series rollups.
+- **Caddy** owns TLS + routing (real Let's Encrypt cert, auto-renewed).
 
-| Plane     | Who                | Mechanism                              | Gates                       |
-|-----------|--------------------|----------------------------------------|-----------------------------|
-| **Ingest**| instrument → cloud | per-source API token (`X-Api-Key`)     | `POST /ingest`              |
-| **Read**  | anyone → dashboard | public / anonymous                     | `GET /api/series`, CSV      |
-| **Control**| admin → config    | username/password → **JWT** (HS256)    | `PUT /api/config`, admin UI |
+## Highlights
 
-Each ingest token is bound to exactly one source, so a leaked lab token can only
-write that instrument's data — never forge another's.
+- **Idempotent, batched ingest** in Go (`ON CONFLICT DO NOTHING` on a TimescaleDB
+  hypertable) — retries and replays never double-write.
+- **Three-tier auth** — per-source API tokens (ingest), public reads, JWT admin
+  (control). A leaked lab token can only write its own instrument's data.
+- **Reliable delivery** — write-ahead offline disk buffer + retry/backoff;
+  **verified zero data loss** across a service restart, a 22 s network outage, a
+  DB restart, and a full host reboot.
+- **Load-tested on the real box** — batching lifts ingest **~21×** (≈1,060 →
+  ≈22,300 readings/s); a **continuous aggregate** makes a 30-day query **~28×**
+  faster (~3.2 s → ~0.12 s). Bottleneck identified by measurement, fixes applied,
+  scaling roadmap documented — and deliberately *not* over-built.
+- **Closed control loop** — admins change the sampling rate from the dashboard;
+  the edge producer polls and adopts it live.
+- **Real-lab integration without touching the lab's software** — a read-only
+  InfluxDB→AWS mirror plus a high-rate bridge client; **30 days of history
+  backfilled** so data outlives the old retention cap.
+- **Threshold email alerting** with per-metric debounce and a daily cap.
 
-## Tech stack & why
+## Tech stack
 
-| Choice | Rationale |
-|--------|-----------|
-| **Go** (chi + pgx) for ingest/API | The honest home for concurrency: many producers, goroutine-per-request, idempotent writes. No ORM — every SQL query is explicit and owned. |
-| **Python** at the edge | The lab's instrument I/O already works in PyVISA (GPIB needs NI-VISA). Reuse it; don't rewrite hardware I/O in Go. |
-| **TimescaleDB** | Postgres + time-series: `time_bucket` downsampling, unlimited retention, trivial CSV export — the things the Grafana free tier wouldn't give. |
-| **React + TS + Recharts** | Standard, typed dashboard; builds to static files served by Caddy. |
-| **Caddy** | Automatic HTTPS (Let's Encrypt) for `sslip.io` with a one-line config. |
-| **Docker Compose** | One `up` brings the whole stack up on the ARM EC2 box. |
-
-## Scope (honest)
-
-**In scope (MVP):** the existing few-second-cadence, multi-channel vacuum +
-temperature telemetry, flowing end-to-end with alerting and remote config.
-
-**Designed for, not yet live:** a planned ~2 ms / 50 Hz fast STM-current channel
-lives on a *separate, not-yet-connected* computer. The ingest path takes
-per-source tokens and the system is **load-tested for that future channel's
-headroom** (see [load test](#testing)) — but it is **not claimed to be live**.
-
-**Explicitly out of scope:** consensus, sharding, custom brokers/queues,
-Kubernetes, "web-scale" throughput. The real engineering here is *reliable
-delivery* and *correct handling of concurrent producers*, not raw QPS.
+**Backend** Go · chi · pgx (no ORM) · golang-jwt · TimescaleDB / PostgreSQL ·
+embedded SQL migrations · `net/smtp`
+**Frontend** React 18 · TypeScript (strict) · Recharts · Vite
+**Edge** Python 3 · PyVISA (reused) · `requests` · durable disk queue · `influxdb-client`
+**Infra** Docker (multi-stage, distroless, ARM) · Docker Compose · Caddy 2 · AWS EC2 (Graviton)
+**Quality** Go `testing` (unit + DB integration) · `pytest` · custom Go load/chaos harness
 
 ## Repository layout
 
 ```
-server/      Go ingest + API service (chi, pgx), embedded SQL migrations, tests
-collector/   Python edge collector — RealReader (PyVISA) + MockReader,
-             batching, retry+backoff, offline disk buffer, config polling
-mock/        Chaos + load harness (latency/loss/disconnect; high-freq + N producers)
-bench/       Load + reliability harness (Go) used for BENCHMARKS.md
-forwarder/   InfluxDB → AWS mirror (runs on EC2; replicates the lab's Grafana data)
-lab/         High-rate (1 s) LS350 → AWS producer for the lab PC (creds git-ignored)
-web/         React + TS + Recharts dashboard (public charts + admin panel)
-deploy/      docker-compose.yml (prod) + Caddyfile (auto-HTTPS)
-PLAN.md      Architecture, design decisions, scope rationale
-WORKLOG.md   Append-only build log (findings, test numbers, deploy verification)
-WIRING.md    How to point the real lab PC at this system (last step)
+server/      Go ingest + API (chi, pgx); embedded migrations; unit + integration tests
+collector/   Python edge collector — MockReader / RealReader, retry, offline buffer, config loop
+forwarder/   Read-only InfluxDB → AWS mirror + one-time history backfill (runs on EC2)
+lab/         High-rate (1 Hz) instrument → AWS producer for the lab PC
+mock/         Chaos + load harness (latency/loss/disconnect; concurrent + high-frequency)
+bench/        Go load + reliability harness used for BENCHMARKS.md
+web/          React + TS + Recharts dashboard (public charts + admin panel)
+deploy/       docker-compose.yml (prod) + Caddyfile (auto-HTTPS) + deploy.sh
+docs/         Hardware↔software interface, screenshots
 ```
 
 ## Quick start (local, against the mock)
@@ -104,73 +96,46 @@ WIRING.md    How to point the real lab PC at this system (last step)
 Requires Docker (+ Compose), Go 1.23+, Node 18+, Python 3.10+.
 
 ```bash
-# 1. Bring up TimescaleDB + the Go API (migrations run automatically at boot)
-cp .env.example .env                       # dev defaults work as-is
-docker compose -f deploy/docker-compose.dev.yml up -d --build
+cp .env.example .env                                   # dev defaults work as-is
+docker compose -f deploy/docker-compose.dev.yml up -d --build   # TimescaleDB + API
 
-# 2. Run the collector with the built-in mock instrument feed
 python3 -m venv collector/.venv && source collector/.venv/bin/activate
 pip install -r collector/requirements.txt
-INGEST_URL=http://localhost:8080 INGEST_TOKEN=dev-ingest-token-change-me \
-  SOURCE=unisoku-stm python collector/collector.py
+INGEST_URL=http://localhost:8080 INGEST_TOKEN=dev-ingest-token \
+  SOURCE=unisoku-stm python collector/collector.py     # realistic mock feed
 
-# 3. Run the dashboard
-cd web && npm install && npm run dev        # http://localhost:5173
+cd web && npm install && npm run dev                    # http://localhost:5173
 ```
-
-See [`PLAN.md`](./PLAN.md) for the full design and [`WORKLOG.md`](./WORKLOG.md)
-for the build/test/deploy record.
 
 ## Testing
 
-- **Unit (Go):** ingest validation, dedupe/idempotency, all three auth planes,
-  config apply, alert threshold logic.
-- **Integration:** collector → ingest → DB → read API round-trip vs. the mock.
-- **Load / chaos:** mock producers with injected latency, packet loss and
-  disconnects, asserting **no data loss**, **correct ordering**, and stability
-  under a simulated high-frequency producer plus multiple concurrent producers.
-
-  Representative run (5 concurrent producers incl. one high-frequency, 3600
-  readings, through a proxy injecting 15 ms latency / 15% drop / 10% ambiguous
-  failures / a 3 s hard outage):
-
-  ```
-  proxy: forwarded=90 dropped=21 ambiguous=7 outage_blocked=13, peak buffer depth=76 batches
-  totals: generated=3600 stored=3600 loss=0 duplicates=0  ~665 readings/s through chaos
-  RESULT: PASS — no data loss, correct ordering, idempotent under chaos
-  ```
-
-How to run the tests:
-
 ```bash
-# Go unit tests (hermetic)
-cd server && go test ./...
-# Go integration tests (against a running TimescaleDB)
+cd server && go test ./...                                          # Go unit (hermetic)
 TEST_DATABASE_URL=postgres://labmon:labmon-dev-password@localhost:5432/labmon?sslmode=disable \
-  go test ./internal/store -run Integration
-# Python collector unit tests
-cd collector && ./.venv/bin/python -m pytest tests/ -q
-# Load / chaos test (dev stack up, with a 'loadtest' ingest token)
-INGEST_TOKEN=loadtest-token ./collector/.venv/bin/python mock/load_test.py
+  go test ./internal/store -run Integration                        # DB integration
+cd collector && ./.venv/bin/python -m pytest tests/ -q             # Python unit
+INGEST_TOKEN=loadtest-token ./collector/.venv/bin/python mock/load_test.py   # chaos/load
 ```
 
-## Performance & reliability (load-tested on the deployed box)
+## Documentation
 
-A focused hardening pass measured the single-box limits **over the real network
-against the `t4g.small`** and fixed the bottlenecks ([`BENCHMARKS.md`](./BENCHMARKS.md)):
+| Doc | What |
+|---|---|
+| [REPORT.md](./REPORT.md) | Full technical report — stack, decisions, measured outcomes |
+| [PLAN.md](./PLAN.md) | Architecture & design rationale |
+| [BENCHMARKS.md](./BENCHMARKS.md) | Load + reliability results, bottleneck analysis, scaling roadmap |
+| [docs/HARDWARE_INTERFACE.md](./docs/HARDWARE_INTERFACE.md) | Instrument ↔ software interface (Lake Shore 350, SCPI) |
+| [WIRING.md](./WIRING.md) | How the live lab connects to the system |
+| [WORKLOG.md](./WORKLOG.md) | Append-only build/test/deploy log |
 
-- **Ingest:** batching lifts the sustainable rate ~**10×** and the ceiling ~**21×**
-  (≈1,060 → ≈22,300 readings/s). The bottleneck is **TimescaleDB CPU on 2 vCPUs**,
-  not the Go service (≈27 % CPU / 16 MiB) — measured, not assumed.
-- **Long-range reads:** a TimescaleDB **continuous aggregate** makes a 30-day query
-  **~28× faster** (~3.2 s → ~0.12 s), scanning 120× fewer rows.
-- **Reliability:** verified **no data loss** across a go-api restart, a 22 s network
-  black hole, a DB restart (rows persisted), and a **full EC2 reboot** (stack
-  self-heals via `restart: unless-stopped`). Even at ~9× the ingest ceiling,
-  0 errors / 0 loss — graceful degradation, never drops.
-- **Scaling roadmap** is documented and **deliberately not built** (no broker /
-  sharding / k8s): unnecessary at < 10 instruments with 100–1000× headroom.
+## Scope (honest)
+
+In scope: the existing few-second, multi-channel vacuum + temperature telemetry,
+end-to-end, with alerting and remote config — running in production on real data.
+A planned ~50 Hz fast STM-current channel is **designed for and load-tested**, but
+not yet connected (never claimed live). No consensus/sharding/broker/Kubernetes —
+unnecessary at this scale and deliberately left as a documented roadmap.
 
 ## License
 
-MIT (see `LICENSE`).
+[MIT](./LICENSE)

@@ -11,8 +11,7 @@ piece" that connects the real lab to the system in this repo.
 
 - **Controller:** Lake Shore **Model 350** cryogenic temperature controller (4
   sensor inputs A–D), reading the cryostat's calibrated thermometers.
-- **Link:** RS-232 serial from the Model 350 to the lab Windows PC
-  ("CRYOGENICSYSTEM"), on **`COM6`**.
+- **Link:** RS-232 serial from the Model 350 to the lab Windows PC, on **`COM6`**.
 - **Serial parameters (note the unusual framing):**
   **57600 baud, 7 data bits, odd parity, 1 stop bit (7-O-1)**, no flow control.
   This 7O1 framing is a Lake Shore quirk and must match exactly or replies are
