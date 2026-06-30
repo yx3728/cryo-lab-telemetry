@@ -31,8 +31,8 @@ type Config struct {
 	JWTSecret     []byte
 	JWTTTL        time.Duration
 
-	// Alerting.
-	AlertDebounce     time.Duration
+	// Alerting. The daily email cap is a fallback default; the live value is the
+	// admin-editable `alert_max_emails_per_day` config row.
 	AlertMaxEmailsDay int
 	SMTP              SMTPConfig
 	AlertEmailTo      []string
@@ -64,8 +64,7 @@ func Load() (*Config, error) {
 		AdminPassword:     os.Getenv("ADMIN_PASSWORD"),
 		JWTSecret:         []byte(os.Getenv("JWT_SECRET")),
 		JWTTTL:            time.Duration(envInt("JWT_TTL_HOURS", 24)) * time.Hour,
-		AlertDebounce:     time.Duration(envInt("ALERT_DEBOUNCE_SECONDS", 300)) * time.Second,
-		AlertMaxEmailsDay: envInt("ALERT_MAX_EMAILS_PER_DAY", 50),
+		AlertMaxEmailsDay: envInt("ALERT_MAX_EMAILS_PER_DAY", 6),
 		SMTP: SMTPConfig{
 			Host:     os.Getenv("SMTP_HOST"),
 			Port:     envOr("SMTP_PORT", "587"),

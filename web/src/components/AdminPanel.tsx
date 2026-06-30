@@ -48,7 +48,11 @@ export function AdminPanel({ onConfigChange }: { onConfigChange?: () => void }) 
     setMsg(null);
     try {
       const updated = await putConfig(
-        { sampling_interval_seconds: config.sampling_interval_seconds, thresholds: config.thresholds },
+        {
+          sampling_interval_seconds: config.sampling_interval_seconds,
+          alert_max_emails_per_day: config.alert_max_emails_per_day,
+          thresholds: config.thresholds,
+        },
         token,
       );
       setConfig(updated);
@@ -86,6 +90,17 @@ export function AdminPanel({ onConfigChange }: { onConfigChange?: () => void }) 
               max={3600}
               value={config.sampling_interval_seconds}
               onChange={(e) => setConfig({ ...config, sampling_interval_seconds: Number(e.target.value) })}
+            />
+          </label>
+
+          <label className="field">
+            <span>Max alert emails / day</span>
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={config.alert_max_emails_per_day}
+              onChange={(e) => setConfig({ ...config, alert_max_emails_per_day: Number(e.target.value) })}
             />
           </label>
 

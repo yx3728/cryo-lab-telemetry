@@ -39,37 +39,42 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
-// TestDebounce drives the debounce window with an injected clock. The Alerter's
-// debounce state lives entirely in memory (no DB), so we can pass a nil store.
-func TestDebounce(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a := New(nil, 60*time.Second, 0, log)
+// TestEdgeTrigger verifies one event on the up-cross (alert), silence while it
+// stays violating, and one event on the down-cross (recovered). The state
+// decision is pure (no DB), so a nil store is fine.
+func TestEdgeTrigger(t *testing.T) {
+	a := New(nil, 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	thr := store.Threshold{Metric: "OC", Max: f(1e-8), Enabled: true}
 
-	current := time.Unix(1_000_000, 0)
-	a.now = func() time.Time { return current }
+	step := func(value float64) string {
+		cross, crossed := Evaluate(thr, value)
+		event, _, _ := a.transition("OC", thr, cross, crossed)
+		return event
+	}
 
-	if a.debounced("STM") {
-		t.Fatal("first cross should not be debounced")
+	if got := step(2e-9); got != "" {
+		t.Fatalf("in-range reading should emit nothing, got %q", got)
 	}
-	// 30s later: still within the 60s window -> suppressed.
-	current = current.Add(30 * time.Second)
-	if !a.debounced("STM") {
-		t.Fatal("second cross within window should be debounced")
+	if got := step(5e-8); got != "alert" {
+		t.Fatalf("crossing above should emit 'alert', got %q", got)
 	}
-	// A different metric is independent.
-	if a.debounced("OC") {
-		t.Fatal("first cross for a different metric should not be debounced")
+	if got := step(6e-8); got != "" {
+		t.Fatalf("staying above should emit nothing (no repeat), got %q", got)
 	}
-	// 61s after the first fire: window elapsed -> re-armed.
-	current = current.Add(31 * time.Second)
-	if a.debounced("STM") {
-		t.Fatal("cross after the debounce window should re-arm (not be debounced)")
+	if got := step(3e-9); got != "recovered" {
+		t.Fatalf("dropping back should emit 'recovered', got %q", got)
+	}
+	if got := step(2e-9); got != "" {
+		t.Fatalf("staying in-range should emit nothing, got %q", got)
+	}
+	if got := step(9e-8); got != "alert" {
+		t.Fatalf("re-crossing should emit 'alert' again, got %q", got)
 	}
 }
 
 func TestNotifyCap(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a := New(nil, time.Second, 2, log) // cap 2 notifications/day
+	a := New(nil, 2, log) // cap 2 notifications/day
 	current := time.Date(2026, 6, 19, 10, 0, 0, 0, time.UTC)
 	a.now = func() time.Time { return current }
 
@@ -87,7 +92,7 @@ func TestNotifyCap(t *testing.T) {
 }
 
 func TestNotifyCapUnlimited(t *testing.T) {
-	a := New(nil, time.Second, 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	a := New(nil, 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for i := 0; i < 500; i++ {
 		if !a.allowNotify() {
 			t.Fatal("cap of 0 means unlimited")

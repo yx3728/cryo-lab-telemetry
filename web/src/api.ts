@@ -31,6 +31,7 @@ export interface Threshold {
 
 export interface ConfigPayload {
   sampling_interval_seconds: number;
+  alert_max_emails_per_day: number;
   thresholds: Threshold[];
 }
 

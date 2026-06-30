@@ -8,7 +8,10 @@ import (
 	"github.com/yx3728/lab-monitor/server/internal/store"
 )
 
-const samplingIntervalKey = "sampling_interval_seconds"
+const (
+	samplingIntervalKey = "sampling_interval_seconds"
+	maxEmailsKey        = "alert_max_emails_per_day"
+)
 
 // --- login (control plane) ---------------------------------------------------
 
@@ -49,6 +52,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 // zero SamplingIntervalSeconds means "leave unchanged"; Thresholds are upserted.
 type configPayload struct {
 	SamplingIntervalSeconds int               `json:"sampling_interval_seconds"`
+	AlertMaxEmailsPerDay    int               `json:"alert_max_emails_per_day"`
 	Thresholds              []store.Threshold `json:"thresholds"`
 }
 
@@ -86,6 +90,19 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if req.AlertMaxEmailsPerDay != 0 {
+		if req.AlertMaxEmailsPerDay < 1 || req.AlertMaxEmailsPerDay > 1000 {
+			writeError(w, http.StatusBadRequest, "alert_max_emails_per_day must be 1..1000")
+			return
+		}
+		if err := s.store.SetConfigValue(r.Context(), maxEmailsKey,
+			strconv.Itoa(req.AlertMaxEmailsPerDay)); err != nil {
+			s.log.Error("config: set email cap failed", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not update email cap")
+			return
+		}
+	}
+
 	for _, t := range req.Thresholds {
 		if t.Metric == "" {
 			writeError(w, http.StatusBadRequest, "threshold metric is required")
@@ -118,6 +135,12 @@ func (s *Server) currentConfig(r *http.Request) (configPayload, error) {
 			interval = n
 		}
 	}
+	maxEmails := 6
+	if v, err := s.store.GetConfigValue(r.Context(), maxEmailsKey); err == nil {
+		if n, perr := strconv.Atoi(v); perr == nil {
+			maxEmails = n
+		}
+	}
 	thresholds, err := s.store.GetThresholds(r.Context())
 	if err != nil {
 		return configPayload{}, err
@@ -125,5 +148,9 @@ func (s *Server) currentConfig(r *http.Request) (configPayload, error) {
 	if thresholds == nil {
 		thresholds = []store.Threshold{}
 	}
-	return configPayload{SamplingIntervalSeconds: interval, Thresholds: thresholds}, nil
+	return configPayload{
+		SamplingIntervalSeconds: interval,
+		AlertMaxEmailsPerDay:    maxEmails,
+		Thresholds:              thresholds,
+	}, nil
 }
